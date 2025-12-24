@@ -11,222 +11,147 @@ except AttributeError:
     pass
 else:
     ssl._create_default_https_context = _create_unverified_https_context
-# ----------------------
 
 # ページ設定
-st.set_page_config(page_title="オプション市場", page_icon="🦁", layout="wide")
-st.title("オプション市場 & スマートマネー手口 🦁")
-st.markdown("機関投資家の「本音」はオプション市場に現れます。**VIX（恐怖）** と **SKEW（ブラックスワン）** を監視して、暴落の予兆を捉えます。")
+st.set_page_config(page_title="DAI: 市場異常度指数", page_icon="🦁", layout="wide")
+st.title("🦁 DAI: Derivative Anomaly Index")
+st.markdown("市場の「不信感・金利・恐怖・歪み」を統合監視するプロ仕様ダッシュボード")
 
 # キャッシュ設定
-@st.cache_data(ttl=300)
-def get_option_data():
+@st.cache_data(ttl=60)
+def get_dai_data():
     tickers = {
-        "VIX": "^VIX",
-        "VIX3M": "^VIX3M", 
-        "VVIX": "^VVIX",   
-        "SKEW": "^SKEW" 
+        "HYG": "HYG", "LQD": "LQD",
+        "TNX": "^TNX", "VIX": "^VIX", "SKEW": "^SKEW"
     }
     
     data_list = []
-    hist_data = {}
     
-    progress_text = "オプションデータを解析中..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    count = 0
-    total = len(tickers)
-
     for name, ticker in tickers.items():
         try:
-            count += 1
-            my_bar.progress(count / total, text=f"{name} を取得中...")
-            
             t = yf.Ticker(ticker)
             hist = t.history(period="1y")
             
             if not hist.empty:
-                price = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2]
-                
-                # チャート用に保存
-                hist_data[name] = hist['Close']
-                
-                data_list.append({
-                    "Name": name,
-                    "Price": price,
-                    "Prev": prev
-                })
+                s = hist["Close"]
+                s.name = name
+                # ⚠️重要: タイムゾーンを削除して日付を強制的に合わせる
+                s.index = s.index.tz_localize(None)
+                data_list.append(s)
         except:
             pass
             
-    my_bar.empty()
-    
-    # データ結合と整形
-    if hist_data:
-        df_chart = pd.concat(hist_data.values(), axis=1, keys=hist_data.keys())
-        df_chart = df_chart.ffill().dropna()
-    else:
-        df_chart = pd.DataFrame()
-        
-    return pd.DataFrame(data_list), df_chart
+    if data_list:
+        # データを結合し、欠損を前日の値で埋める
+        df = pd.concat(data_list, axis=1)
+        df = df.ffill().dropna()
+        return df
+    return pd.DataFrame()
 
-# --- メイン処理 ---
-df, df_chart = get_option_data()
+df = get_dai_data()
+
+# 安全な計算用関数
+def safe_z(series):
+    if series is None or len(series) < 5: return 0
+    std = series.std()
+    if std == 0: return 0
+    return (series.iloc[-1] - series.mean()) / std
+
+def safe_val(series):
+    return series.iloc[-1] if series is not None and not series.empty else 0
 
 if df.empty:
-    st.error("データ取得失敗")
+    st.error("⏳ データ取得中... 少し待ってからリロードしてください")
 else:
-    # データ抽出（安全に）
-    def get_val(name):
-        row = df[df["Name"] == name]
-        return row.iloc[0]["Price"] if not row.empty else 0
+    # --- 1. Credit Score (不信感) ---
+    # 行を短く分割してエラーを防止
+    has_lqd = "LQD" in df.columns
+    has_hyg = "HYG" in df.columns
     
-    def get_prev(name):
-        row = df[df["Name"] == name]
-        return row.iloc[0]["Prev"] if not row.empty else 0
+    if has_lqd and has_hyg:
+        credit_ratio = df["LQD"] / df["HYG"]
+        score_c = min(max(30 + safe_z(credit_ratio) * 25, 0), 100)
+        val_c = safe_val(credit_ratio)
+    else:
+        credit_ratio = pd.Series(dtype=float)
+        score_c, val_c = 0, 0
 
-    vix_val = get_val("VIX")
-    vix3m_val = get_val("VIX3M")
-    skew_val = get_val("SKEW")
-    vvix_val = get_val("VVIX")
-    
-    vix_diff = vix_val - get_prev("VIX")
-    skew_diff = skew_val - get_prev("SKEW")
+    # --- 2. Rate Score (金利) ---
+    if "TNX" in df.columns:
+        score_r = min(max(30 + safe_z(df["TNX"]) * 20, 0), 100)
+        val_r = safe_val(df["TNX"])
+    else:
+        score_r, val_r = 0, 0
 
-    # 1. 重要指標ダッシュボード
-    st.subheader("📊 Volatility Dashboard")
+    # --- 3. Volatility Score (恐怖) ---
+    if "VIX" in df.columns:
+        vix = safe_val(df["VIX"])
+        score_v = min((vix / 50) * 100, 100)
+    else:
+        vix, score_v = 0, 0
     
-    c1, c2, c3, c4 = st.columns(4)
+    # --- 4. Skew Score (歪み) ---
+    if "SKEW" in df.columns:
+        skew = safe_val(df["SKEW"])
+        score_s = min(max((skew - 100) * 2, 0), 100)
+    else:
+        skew, score_s = 0, 0
+
+    # 🏆 DAI 総合指数
+    dai = (score_c * 0.3) + (score_r * 0.25) + (score_v * 0.25) + (score_s * 0.2)
+
+    # --- 表示エリア ---
+    c_main, c_detail = st.columns([1, 2])
     
-    with c1:
-        # VIX
-        color = "inverse" if vix_diff > 0 else "normal"
-        st.metric("VIX (恐怖指数)", f"{vix_val:.2f}", f"{vix_diff:+.2f}", delta_color=color)
+    with c_main:
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number", value=dai,
+            title={'text': "<b>DAI 総合異常度</b>"},
+            gauge={
+                'axis': {'range': [None, 100]},
+                'steps': [
+                    {'range': [0, 40], 'color': "#00CC96"},
+                    {'range': [40, 60], 'color': "#FFA15A"},
+                    {'range': [60, 80], 'color': "#FF6692"},
+                    {'range': [80, 100], 'color': "#EF553B"}
+                ],
+                'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': dai}
+            }
+        ))
+        fig.update_layout(height=300, margin=dict(l=20,r=20,t=50,b=20))
+        st.plotly_chart(fig, use_container_width=True)
         
-    with c2:
-        # Term Structure Spread
-        spread = vix3m_val - vix_val
-        st.metric("VIX期間構造 (3M - Spot)", f"{spread:.2f}", help="マイナス（逆鞘）になるとパニック状態")
+        if dai < 40: st.success("✅ 市場は正常です")
+        elif dai < 60: st.warning("⚠️ 緊張感が出ています")
+        else: st.error("🔥 警戒・危険レベルです")
+
+    with c_detail:
+        st.subheader("🔍 詳細スコア (0-100)")
+        c1, c2 = st.columns(2)
+        c3, c4 = st.columns(2)
         
-    with c3:
-        # SKEW
-        color_skew = "inverse" if skew_val > 140 else "off"
-        st.metric("SKEW (ブラックスワン)", f"{skew_val:.2f}", f"{skew_diff:+.2f}", delta_color=color_skew)
-        
-    with c4:
-        # VVIX
-        st.metric("VVIX (VIXの予兆)", f"{vvix_val:.2f}")
+        def show_gauge(title, val, raw_text):
+            st.markdown(f"**{title}**")
+            st.progress(int(min(max(val, 0), 100)) / 100)
+            st.caption(f"{raw_text}")
+
+        with c1: show_gauge("🏦 Credit (信用)", score_c, f"LQD/HYG Ratio: {val_c:.2f}")
+        with c2: show_gauge("📈 Rate (金利)", score_r, f"US 10Y: {val_r:.2f}%")
+        with c3: show_gauge("📉 Volatility (恐怖)", score_v, f"VIX: {vix:.2f}")
+        with c4: show_gauge("🦢 Skew (歪み)", score_s, f"SKEW: {skew:.2f}")
 
     st.markdown("---")
-
-    # 2. 警戒レベル判定
-    st.subheader("🦁 機関投資家の警戒レベル判定")
+    st.subheader("📊 時系列チャート")
     
-    status = ""
-    if spread < 0:
-        status = "🛑 PANIC (パニック)"
-        msg = "現在のVIXが3ヶ月先より高い「逆鞘」状態です。市場はクラッシュを恐れています。"
-        bg_color = "#EF553B"
-    elif spread < 2.0:
-        status = "⚠️ CAUTION (警戒)"
-        msg = "VIXスプレッドが縮小しています。警戒感が高まっています。"
-        bg_color = "#FFA15A"
-    else:
-        status = "✅ NORMAL (正常)"
-        msg = "期間構造は正常（順鞘）です。今のところ過度なパニックは見られません。"
-        bg_color = "#00CC96"
-
-    st.markdown(f"""
-    <div style="padding: 15px; border-radius: 5px; background-color: {bg_color}; color: white; margin-bottom: 20px;">
-        <h3 style="margin:0;">判定: {status}</h3>
-        <p style="margin:0;">{msg}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # --- チャート描画セクション ---
-    
-    if not df_chart.empty:
-        # Chart 1: VIX Term Structure
-        st.markdown("### 📉 1. VIX期間構造チャート (恐怖の逆転監視)")
-        st.caption("通常は「緑線(3ヶ月後)」が上にあります。**「赤線(今)」が上に来たらパニック**です。")
-        
-        fig_vix = go.Figure()
-        # VIX (Spot) -> Red
-        fig_vix.add_trace(go.Scatter(
-            x=df_chart.index, y=df_chart["VIX"], 
-            name="Spot VIX (現在)", 
-            line=dict(color="#EF553B", width=2)
-        ))
-        # VIX3M -> Green
-        fig_vix.add_trace(go.Scatter(
-            x=df_chart.index, y=df_chart["VIX3M"], 
-            name="VIX 3M (3ヶ月後)", 
-            line=dict(color="#00CC96", width=2)
-        ))
-        
-        fig_vix.update_layout(
-            height=400,
-            hovermode="x unified",
-            yaxis_title="VIXポイント",
-            legend=dict(orientation="h", y=1.02, x=0),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#444")
-        )
-        st.plotly_chart(fig_vix, use_container_width=True)
-
-        # Chart 2: SKEW Index
-        st.markdown("### 🦢 2. SKEW指数チャート (ブラックスワン監視)")
-        st.caption("暴落への保険料（プットオプション需要）。**140の赤い点線を超えると、暴落警戒警報**です。")
-        
-        fig_skew = go.Figure()
-        
-        # SKEW Line
-        fig_skew.add_trace(go.Scatter(
-            x=df_chart.index, y=df_chart["SKEW"], 
-            name="SKEW Index", 
-            line=dict(color="#FFA15A", width=1.5),
-            fill='tozeroy', # 下を塗りつぶし
-            fillcolor='rgba(255, 161, 90, 0.1)'
-        ))
-        
-        # Danger Line (140)
-        fig_skew.add_hline(
-            y=140, 
-            line_dash="dash", 
-            line_color="red", 
-            annotation_text="⚠️ 警戒ライン (140)", 
-            annotation_position="bottom right"
-        )
-        
-        fig_skew.update_layout(
-            height=350,
-            hovermode="x unified",
-            yaxis_title="SKEWポイント",
-            showlegend=False,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#444")
-        )
-        st.plotly_chart(fig_skew, use_container_width=True)
-
-    else:
-        st.warning("チャート用のデータが取得できませんでした。")
-
-    # 4. ヒント
-    with st.expander("📚 オプション指標の読み方"):
-        st.markdown("""
-        * **VIX (Volatility Index):**
-            * **< 15:** 楽観（株は上がりやすいが、油断禁物）
-            * **20 - 30:** 警戒（相場が荒れている）
-            * **> 30:** パニック（セリングクライマックスの可能性、買い場が近い）
-        * **SKEW (Skew Index):**
-            * 通常は100〜120。
-            * **140以上** になると、市場参加者が「まさかの暴落」に備えてヘッジコストを払っている状態。**暴落の先行指標**になりやすい。
-        * **VIX期間構造 (Spread):**
-            * **VIX3M > VIX (順鞘):** 正常。将来の方が不確実性が高いのは当たり前。
-            * **VIX > VIX3M (逆鞘):** 異常事態。今すぐ現金化したいパニック売りが起きている状態。
-        """)
+    t1, t2 = st.tabs(["信用リスク (LQD/HYG)", "金利 & 恐怖 (TNX/VIX)"])
+    with t1:
+        if not credit_ratio.empty:
+            st.caption("上昇すると「信用リスク（不信感）」が高まっています")
+            st.line_chart(credit_ratio)
+        else:
+            st.info("データ待機中...")
+            
+    with t2:
+        if "TNX" in df.columns and "VIX" in df.columns:
+            st.caption("金利(TNX)と恐怖指数(VIX)の推移")
+            st.line_chart(pd.DataFrame({"US 10Y": df["TNX"], "VIX/10": df["VIX"]/10}))

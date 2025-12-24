@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objects as go
 import ssl
 
 # --- 🚨 通信エラー回避 ---
@@ -13,183 +14,222 @@ else:
 # ----------------------
 
 # ページ設定
-st.set_page_config(page_title="AI投資コックピット", page_icon="🚀", layout="wide")
+st.set_page_config(
+    page_title="AI 投資コックピット",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- 💰 収益化コンポーネント (サイドバー広告) ---
-def show_sidebar_ads():
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📢 おすすめツール")
-    
-    # アフィリエイトリンクの例 (実際はASPのリンクに差し替えます)
-    st.sidebar.info("""
-    **📈 TradingView**
-    
-    プロも使う最強チャートツール。
-    [👉 無料で試す](https://jp.tradingview.com/)
-    """)
-    
-    st.sidebar.success("""
-    **🐮 MooMoo証券**
-    
-    機関投資家の手口が見れるアプリ。
-    [👉 口座開設はこちら](https://www.moomoo.com/jp)
-    """)
-    
-    st.sidebar.warning("""
-    **🔒 Ledger Nano**
-    
-    暗号資産をハッキングから守る。
-    [👉 公式ストアへ](https://shop.ledger.com/)
-    """)
-    
-    st.sidebar.caption("※当サイトはアフィリエイトプログラムを利用しています。")
+st.title("🚀 AI Global Macro Cockpit (司令室)")
+st.markdown("全9ページの市場データを統合し、現在の**「勝算」**と各セクターの**「異常」**を一元管理します。")
 
-# サイドバー広告を表示
-show_sidebar_ads()
-
-# --- メインコンテンツ開始 ---
-st.title("🚀 AI投資コックピット 2026 (司令室)")
-st.markdown("全9ページの市場データを統合し、現在の**「投資チャンス」**と**「リスク」**を一元管理します。")
-
-# --- データ一括取得関数 (変更なし) ---
+# キャッシュ設定
 @st.cache_data(ttl=600)
-def get_dashboard_data():
+def get_global_data():
     tickers = {
-        "NVIDIA": "NVDA", "BDRY": "BDRY", "USD/JPY": "JPY=X", "US10Y": "^TNX",
-        "Copper": "HG=F", "Gold": "GC=F", "Oil": "CL=F", "Bitcoin": "BTC-USD",
-        "Tech": "XLK", "Energy": "XLE", "REIT": "XLRE", "VIX": "^VIX", "SKEW": "^SKEW"
+        # --- 01. 半導体 & 08. AI ---
+        "SOX": "^SOX",       # 半導体指数
+        "NVDA": "NVDA",      # AIバブルの主役
+        
+        # --- 02. 海運 ---
+        "BDRY": "BDRY",      # バルチック海運ETF
+        
+        # --- 03. 為替 & 金利 ---
+        "USDJPY": "JPY=X",   # ドル円
+        "TNX": "^TNX",       # 米国10年債金利
+        
+        # --- 04. 商品 (インフレ) ---
+        "GLD": "GLD",        # ゴールド (安全資産)
+        
+        # --- 05. 暗号資産 ---
+        "BTC": "BTC-USD",    # ビットコイン
+        
+        # --- 06. クレジット (銀行不信感) & 07. 不動産 ---
+        "IYR": "IYR",        # 米国不動産
+        "HYG": "HYG",        # ジャンク債 (不信感用)
+        "LQD": "LQD",        # 優良社債 (不信感用)
+        
+        # --- 09. オプション (リスク) ---
+        "VIX": "^VIX",       # 恐怖指数
+        "SKEW": "^SKEW"      # ブラックスワン指数
     }
-    data = {}
-    try:
-        for name, ticker in tickers.items():
+    
+    data_list = []
+    
+    for name, ticker in tickers.items():
+        try:
             t = yf.Ticker(ticker)
-            hist = t.history(period="3mo")
+            hist = t.history(period="6mo")
+            
             if not hist.empty:
-                price = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2]
-                change = price - prev
-                pct = (change / prev) * 100
-                ma50 = hist['Close'].rolling(50).mean().iloc[-1]
-                data[name] = {
-                    "Price": price, "Change": change, "Pct": pct, "MA50": ma50,
-                    "Trend": "UP" if price > ma50 else "DOWN"
-                }
-            else:
-                data[name] = None
-    except:
-        pass
-    return data
+                s = hist["Close"]
+                s.name = name
+                s.index = s.index.tz_localize(None)
+                data_list.append(s)
+        except:
+            pass
+            
+    if data_list:
+        df = pd.concat(data_list, axis=1)
+        df = df.ffill().dropna()
+        
+        # クレジットストレス比率を計算 (LQD/HYG)
+        if "LQD" in df.columns and "HYG" in df.columns:
+            df["CREDIT"] = df["LQD"] / df["HYG"]
+            
+        return df
+    return pd.DataFrame()
 
-# --- データ取得 ---
-d = get_dashboard_data()
+df = get_global_data()
 
-# --- AIスコア計算ロジック (変更なし) ---
-score = 50
-reasons = []
+# --- ロジック計算 ---
 
-if d:
-    # (スコア計算ロジックは前回と同じ)
-    if d["VIX"]["Price"] < 20: score += 10; reasons.append("✅ VIX安定 (+10)")
-    else: score -= 20; reasons.append("🛑 VIX恐怖圏 (-20)")
-    if d["SKEW"]["Price"] > 140: score -= 20; reasons.append("🦢 ブラックスワン警戒 (-20)")
-    if d.get("Copper") and d.get("Gold"):
-        ratio = d["Copper"]["Price"] / d["Gold"]["Price"]
-        if ratio > 0.15: score += 10; reasons.append("✅ 景気(銅)強気 (+10)")
-    if d["BDRY"]["Trend"] == "UP": score += 5; reasons.append("✅ 物流(海運)活発 (+5)")
-    if d["NVIDIA"]["Trend"] == "UP": score += 10; reasons.append("✅ AI主導株堅調 (+10)")
-    else: score -= 10
-    if d["Bitcoin"]["Trend"] == "UP": score += 5; reasons.append("✅ リスク選好(BTC) (+5)")
-    score = max(0, min(100, score))
+def calculate_trend_score(series):
+    """ トレンド判定 (0-100) """
+    if series is None or series.empty: return 50
+    current = series.iloc[-1]
+    ma50 = series.rolling(window=50).mean().iloc[-1]
+    if pd.isna(ma50): return 50
+    diff = (current - ma50) / ma50
+    score = 50 + (diff * 500) 
+    return min(max(score, 0), 100)
 
-    # --- アクションプラン ---
-    if score >= 70:
-        status = "積極投資 (Strong Buy)"; color = "#00CC96"
-        action_msg = "今は「攻め」の時です。上昇トレンドに乗ってください。"
-        portfolio = "株式 80% / 現金 10% / その他 10%"
-        tactic = "押し目は積極的に拾う。レバレッジETFも検討可。"
-    elif score >= 40:
-        status = "様子見 (Neutral)"; color = "#FFA15A"
-        action_msg = "方向感が乏しい、またはリスクとチャンスが混在しています。"
-        portfolio = "株式 50% / 現金 40% / 金・債券 10%"
-        tactic = "無理に動かない。「優良株の急落」だけを拾う。高値追いは禁止。"
+if df.empty:
+    st.error("⏳ データ取得中... リロードしてください")
+else:
+    # 1. 攻めのスコア
+    s_nvda = calculate_trend_score(df["NVDA"]) if "NVDA" in df.columns else 50
+    s_sox = calculate_trend_score(df["SOX"]) if "SOX" in df.columns else 50
+    s_btc = calculate_trend_score(df["BTC"]) if "BTC" in df.columns else 50
+    growth_score = (s_nvda * 0.4) + (s_sox * 0.3) + (s_btc * 0.3)
+
+    # 2. 守りのスコア
+    risk_score = 0
+    # VIX
+    if "VIX" in df.columns:
+        vix = df["VIX"].iloc[-1]
+        risk_vix = max(100 - (vix - 12) * 5, 0)
+        risk_score += risk_vix * 0.4
     else:
-        status = "警戒 (Defensive)"; color = "#EF553B"
-        action_msg = "嵐が来ています。資産を守ることを最優先にしてください。"
-        portfolio = "株式 20% / 現金 60% / ヘッジ 20%"
-        tactic = "含み益は利確して現金化。落ちるナイフは掴まない。"
+        risk_score += 40
 
-    # --- UI表示 ---
-    col_score, col_advice = st.columns([1, 2])
-    with col_score:
-        st.markdown(f"""
-        <div style="text-align: center; border: 4px solid {color}; border-radius: 10px; padding: 20px; background-color: rgba(0,0,0,0.3);">
-            <h4 style="margin:0;">AI市場スコア</h4>
-            <h1 style="font-size: 80px; margin: 0; color: {color};">{score}</h1>
-            <h3 style="margin: 0; color: {color};">{status}</h3>
-        </div>
-        """, unsafe_allow_html=True)
+    # Credit (LQD/HYG)
+    if "CREDIT" in df.columns:
+        ratio = df["CREDIT"]
+        ma20 = ratio.rolling(window=20).mean().iloc[-1]
+        curr = ratio.iloc[-1]
+        # 比率上昇＝不信感＝リスク増
+        risk_credit = 20 if curr > ma20 else 80
+        risk_score += risk_credit * 0.3
+    else:
+        risk_score += 24
+        
+    # 金利
+    if "TNX" in df.columns:
+        tnx = df["TNX"].iloc[-1]
+        risk_rate = max(100 - (tnx * 15), 0) 
+        risk_score += risk_rate * 0.3
+    else:
+        risk_score += 15
+
+    # 3. 総合判定
+    final_score = (growth_score * 0.6) + (risk_score * 0.4)
+    
+    # --- 表示エリア ---
+
+    col_gauge, col_advice = st.columns([1, 2])
+    
+    with col_gauge:
+        fig = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = final_score,
+            title = {'text': "<b>AI 市場判断スコア</b>", 'font': {'size': 20}}, # タイトルフォント調整
+            number = {'font': {'size': 50}}, # 数字フォント調整
+            gauge = {
+                'axis': {'range': [None, 100]},
+                'bar': {'color': "rgba(0,0,0,0)"},
+                'steps': [
+                    {'range': [0, 30], 'color': "#EF553B"},
+                    {'range': [30, 60], 'color': "#FFA15A"},
+                    {'range': [60, 100], 'color': "#00CC96"}
+                ],
+                'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': final_score}
+            }
+        ))
+        # ⚠️ ここを修正！上下の余白(margin t, b)を広げて重なりを解消
+        fig.update_layout(height=300, margin=dict(t=80, b=50, l=20, r=20))
+        st.plotly_chart(fig, use_container_width=True)
+
     with col_advice:
-        st.markdown(f"### 👮‍♂️ AI投資アドバイザーの助言")
-        st.info(f"**現状の判断:** {action_msg}")
-        c_a, c_b = st.columns(2)
-        with c_a:
-            st.markdown(f"**💰 推奨ポートフォリオ**")
-            st.code(portfolio, language="text")
-        with c_b:
-            st.markdown(f"**⚔️ 今取るべき戦術**")
-            st.warning(tactic)
-        with st.expander("📝 スコアの算出根拠を見る"):
-            for r in reasons: st.write(r)
+        st.subheader("👮 AI 投資アドバイザーの助言")
+        if final_score >= 70:
+            st.info("🚀 **STRONG BUY (強気)**\n\nAI・半導体・仮想通貨が市場を牽引しています。リスク許容度を高め、トレンドに乗る局面です。")
+        elif final_score >= 40:
+            st.warning("⚖️ **NEUTRAL (様子見)**\n\n強弱材料が入り混じっています。金利や不信感(Credit)の動きを注視してください。")
+        else:
+            st.error("🛡️ **DEFENSE (退避推奨)**\n\nリスク指標が悪化しています。現金比率を最大化し、嵐が過ぎるのを待ちましょう。")
 
     st.markdown("---")
 
-    # --- 💰 収益化バナーエリア (記事中広告) ---
-    # ここに「証券口座開設」などの横長バナーを置くとクリック率が高いです
-    st.markdown("""
-    <div style="background-color: #262730; border: 1px solid #FFD700; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-        <h3 style="margin:0; color: #FFD700;">🦁 米国株・オプション取引を始めるなら？</h3>
-        <p>当アプリで分析したVIXやSKEWを活用するには、オプション取引対応の証券口座が必須です。</p>
-        <a href="https://www.moomoo.com/jp" target="_blank" style="background-color: #FFD700; color: black; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            👉 プロ愛用のツール「MooMoo」を無料で試す
-        </a>
-    </div>
-    """, unsafe_allow_html=True)
-    # ----------------------------------------
+    # --- 全セクター状況確認パネル ---
+    st.subheader("📡 全方位マーケット・モニタリング (9セクター)")
+    st.caption("各メニューに対応する主要指標のリアルタイム状況です。")
 
-    # 2. 全マーケット要約
-    st.subheader("📊 全マーケット要約 (Summary)")
-    st.markdown("""<style>div[data-testid="stMetric"] { background-color: #262730; padding: 10px; border-radius: 5px; }</style>""", unsafe_allow_html=True)
+    def metric_card(label, col_name, suffix="", inverse=False, sub_val=None, sub_label=""):
+        if col_name in df.columns:
+            val = df[col_name].iloc[-1]
+            prev = df[col_name].iloc[-2]
+            diff = val - prev
+            pct = (diff / prev) * 100
+            
+            # inverse=Trueなら「下がった方が良い」(例:VIX, 金利, Credit比率)
+            is_good = pct > 0 if not inverse else pct < 0
+            delta_color = "normal" if not inverse else "inverse"
+            
+            st.metric(label, f"{val:,.2f}{suffix}", f"{pct:+.2f}%", delta_color=delta_color)
+            
+            if sub_val is not None:
+                st.caption(f"{sub_label}: {sub_val:.2f}")
+            elif is_good:
+                st.caption("✅ 強気 / 安定")
+            else:
+                st.caption("⚠️ 弱気 / 警戒")
+        else:
+            st.metric(label, "N/A", "0.00%")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("#### 🚀 成長・ハイテク")
-        nvda = d["NVIDIA"]; btc = d["Bitcoin"]; xlk = d["Tech"]
-        st.metric("01. 半導体 (NVDA)", f"${nvda['Price']:.2f}", f"{nvda['Pct']:.2f}%")
-        st.metric("05. ビットコイン (BTC)", f"${btc['Price']:,.0f}", f"{btc['Pct']:.2f}%")
-        st.caption(f"セクター動向: Techトレンドは {xlk['Trend']}")
-    with c2:
-        st.markdown("#### 🌏 実体経済・マクロ")
-        bdry = d["BDRY"]; us10y = d["US10Y"]; jpy = d["USD/JPY"]
-        st.metric("02. 海運 (BDRY)", f"{bdry['Price']:.2f}", f"{bdry['Pct']:.2f}%")
-        st.metric("03. 米10年債金利", f"{us10y['Price']:.2f}%", f"{us10y['Pct']:.2f}%")
-        st.caption(f"ドル円: ¥{jpy['Price']:.2f}")
-    with c3:
-        st.markdown("#### 🛡️ リスク管理")
-        vix = d["VIX"]; skew = d["SKEW"]; reit = d["REIT"]
-        v_col = "inverse" if vix['Price'] > 20 else "normal"
-        st.metric("09. 恐怖指数 (VIX)", f"{vix['Price']:.2f}", f"{vix['Pct']:.2f}%", delta_color=v_col)
-        s_col = "inverse" if skew['Price'] > 140 else "off"
-        st.metric("09. SKEW (暴落警戒)", f"{skew['Price']:.2f}", f"{skew['Pct']:.2f}%", delta_color=s_col)
-        st.caption(f"不動産(REIT)トレンド: {reit['Trend']}")
+    # 1段目: 攻めの資産 (Growth)
+    st.markdown("##### 🚀 成長テーマ (AI・半導体・仮想通貨)")
+    r1c1, r1c2, r1c3 = st.columns(3)
+    with r1c1: metric_card("01. 半導体 (SOX)", "SOX")
+    with r1c2: metric_card("08. AI主導株 (NVDA)", "NVDA")
+    with r1c3: metric_card("05. ビットコイン (BTC)", "BTC", suffix=" $")
 
-else:
-    st.error("データ取得中...")
+    st.divider()
 
-# --- ⚠️ 免責事項 (必須) ---
-st.markdown("---")
-st.caption("""
-**免責事項:**
-本アプリは情報提供のみを目的としており、投資勧誘を目的としたものではありません。
-表示されるスコアやシグナルはAIによる自動計算であり、将来の運用成果を保証するものではありません。
-投資判断はご自身の責任において行ってください。当サイトのリンクにはアフィリエイトが含まれる場合があります。
-""")
+    # 2段目: 実体経済・サイクル (海運・不動産・★不信感★)
+    st.markdown("##### 🌍 実体経済・クレジット (不信感監視)")
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r2c1: metric_card("02. 海運 (BDRY)", "BDRY")
+    with r2c2: metric_card("07. 不動産 (IYR)", "IYR")
+    with r2c3: 
+        # 上昇すると不信感増大なので inverse=True
+        metric_card("06. 銀行不信感 (LQD/HYG)", "CREDIT", inverse=True)
+
+    st.divider()
+
+    # 3段目: リスク管理・ヘッジ (金利・商品・オプション)
+    st.markdown("##### 🛡️ リスク管理・ヘッジ (金利・商品・オプション)")
+    r3c1, r3c2, r3c3 = st.columns(3)
+    with r3c1: metric_card("03. 米国金利 (TNX)", "TNX", suffix="%", inverse=True)
+    with r3c2: metric_card("04. 商品/Gold (GLD)", "GLD")
+    
+    # オプション (VIX + SKEW)
+    with r3c3: 
+        skew_val = df["SKEW"].iloc[-1] if "SKEW" in df.columns else None
+        metric_card("09. オプション市場 (VIX)", "VIX", inverse=True, sub_val=skew_val, sub_label="SKEW")
+
+    st.divider()
+    st.caption("💱 参考: ドル円 (USD/JPY)")
+    if "USDJPY" in df.columns:
+        st.text(f"1 ドル = {df['USDJPY'].iloc[-1]:.2f} 円")
