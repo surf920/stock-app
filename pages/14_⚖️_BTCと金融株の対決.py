@@ -2,6 +2,16 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import ssl
+
+# --- 🚨 Avoid SSL Errors ---
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+# ----------------------
 
 # -----------------------------------------------------------------------------
 # Page Config
@@ -42,7 +52,11 @@ def fetch_data():
     
     return pd.DataFrame(data)
 
-df = fetch_data()
+try:
+    df = fetch_data()
+except Exception as e:
+    st.error(f"Data fetch error: {e}")
+    st.stop()
 
 if df is None:
     st.stop()

@@ -4,6 +4,16 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import ssl
+
+# --- 🚨 Avoid SSL Errors ---
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+# ----------------------
 
 # -----------------------------------------------------------------------------
 # Page Config
