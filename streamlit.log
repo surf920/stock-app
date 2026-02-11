@@ -1,0 +1,13 @@
+2026-02-11 21:46:31.607 Failed to scan component manifests: 'NoneType' object has no attribute 'lower'
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8501
+  Network URL: http://192.168.1.12:8501
+  External URL: http://118.173.33.68:8501
+
+  For better performance, install the Watchdog module:
+
+  $ xcode-select --install
+  $ pip install watchdog
+            
