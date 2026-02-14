@@ -7,7 +7,7 @@ st.set_page_config(page_title="AI Agent分析", page_icon="🤖", layout="wide")
 st.title("🤖 AI Agent 市場分析")
 st.markdown("Claude APIを使用した総合市場分析")
 
-API_URL = "http://127.0.0.1:8001"
+API_URL = "https://stock-app-production-8365.up.railway.app"
 
 if st.button("🔍 市場分析を実行", type="primary", use_container_width=True):
     with st.spinner("AI Agentが市場を分析中... (10-30秒かかります)"):
