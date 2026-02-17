@@ -19,7 +19,7 @@ class AgentAnalysis:
             self.client = Anthropic(api_key=api_key)
         
         # モデルは最新のSonnetを使用（必要に応じて変更）
-        self.model = "claude-3-5-sonnet-20240620"
+        self.model = "claude-3-5-sonnet-20241022"
     
     def analyze_market(self, indicators_data, portfolio_data=None):
         """
