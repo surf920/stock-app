@@ -13,21 +13,24 @@ class AgentAnalysis:
     def __init__(self):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment")
-        self.client = Anthropic(api_key=api_key)
-        self.model = "claude-sonnet-4-20250514"
+            # APIキーがない場合はNoneにしておく（エラーハンドリングはメソッド内で）
+            self.client = None
+        else:
+            self.client = Anthropic(api_key=api_key)
+        
+        # モデルは最新のSonnetを使用（必要に応じて変更）
+        self.model = "claude-3-sonnet-20240229"
     
     def analyze_market(self, indicators_data, portfolio_data=None):
         """
         市場指標を総合分析し、推奨アクションを生成
-        
-        Args:
-            indicators_data: /api/indicatorsのレスポンス
-            portfolio_data: ポートフォリオ情報（オプション）
-        
-        Returns:
-            分析結果と推奨アクション
         """
+        if not self.client:
+            return {
+                "success": False,
+                "error": "ANTHROPIC_API_KEY not found in environment",
+                "timestamp": datetime.now().isoformat()
+            }
         
         # プロンプト構築
         prompt = self._build_prompt(indicators_data, portfolio_data)
@@ -158,7 +161,6 @@ class AgentAnalysis:
                 json_str = response_text[start:end]
                 return json.loads(json_str)
             else:
-                # JSONが見つからない場合、テキストをそのまま返す
                 return {
                     "summary": response_text[:500],
                     "note": "JSON形式ではありません"

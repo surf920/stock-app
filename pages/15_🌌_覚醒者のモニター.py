@@ -5,6 +5,8 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import ssl
+import requests
+import json
 
 # --- 🚨 Avoid SSL Errors ---
 try:
@@ -269,3 +271,66 @@ if "Gold" in market_data:
             st.line_chart(gold_1y["Close"])
     except:
         pass
+
+
+# -----------------------------------------------------------------------------
+# 4. Agent Teams AI Analysis
+# -----------------------------------------------------------------------------
+st.markdown("---")
+st.subheader("🤖 Agent Teams 市場分析 (Powered by Claude 3)")
+st.caption("市場の歪み(DAI)、サイクル、バブルスコアを総合的に分析します。")
+
+# Analyze Button
+if st.button("🔮 アリスに分析を依頼する", type="primary"):
+    with st.spinner("Agent Teamsが協議中... (約10-20秒かかります)"):
+        try:
+            # API Call (Localhost)
+            # サーバーが起動している前提 (api/main.py)
+            response = requests.get("http://localhost:8000/api/agent/analyze", timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                if result.get("success"):
+                    analysis = result.get("analysis", {})
+                    
+                    # Summary
+                    st.success("✅ 分析完了")
+                    
+                    # Layout
+                    col_summary, col_action = st.columns([2, 1])
+                    
+                    with col_summary:
+                        st.markdown("### 📝 エグゼクティブ・サマリー")
+                        st.info(analysis.get("summary", "サマリーなし"))
+                        
+                        st.markdown("### ⚠️ 市場評価")
+                        assessment = analysis.get("market_assessment", {})
+                        st.write(f"**総合リスク**: {assessment.get('overall_risk')}")
+                        st.write(f"**確信度**: {assessment.get('confidence')}%")
+                        
+                        st.markdown("**主な懸念点:**")
+                        for concern in assessment.get("key_concerns", []):
+                            st.write(f"- {concern}")
+                            
+                    with col_action:
+                        st.markdown("### 🛡️ 推奨アクション")
+                        for item in analysis.get("portfolio_recommendations", []):
+                            st.markdown(f"**{item.get('asset_class')}**: {item.get('action')}")
+                            st.caption(f"理由: {item.get('reasoning')}")
+                            
+                    # Detailed Actions
+                    with st.expander("📊 詳細な投資判断を見る"):
+                        st.json(analysis)
+                        
+                else:
+                    st.error(f"分析エラー: {result.get('error')}")
+            else:
+                st.error(f"API接続エラー: Status {response.status_code}")
+                st.write(response.text)
+                
+        except requests.exceptions.ConnectionError:
+            st.error("❌ APIサーバーに接続できません。")
+            st.warning("`uvicorn api.main:app --reload` でAPIサーバーを起動してください。")
+        except Exception as e:
+            st.error(f"予期せぬエラー: {e}")

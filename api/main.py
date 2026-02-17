@@ -9,6 +9,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from core.market_indicators import market_indicators
+from core.agent_analysis import agent_analysis
 
 app = FastAPI(
     title="Stock App API",
@@ -80,20 +81,25 @@ def get_all_indicators():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from core.agent_analysis import agent_analysis
+
 
 @app.get("/api/agent/analyze")
 def get_agent_analysis():
     """Agent Teams市場分析取得"""
-    import json as _json
     try:
+        # 市場指標取得
+        # 注意: market_indicators モジュールが利用可能であることを確認してください
         indicators = market_indicators.get_all_indicators()
+        
+        # Agent分析実行
         analysis = agent_analysis.analyze_market(indicators)
+        
         if not analysis.get("success"):
-            return JSONResponse(status_code=500, content={"error": str(analysis.get("error", "unknown"))}, media_type="application/json; charset=utf-8")
-        return JSONResponse(content=_json.loads(_json.dumps(analysis, ensure_ascii=False, default=str)), media_type="application/json; charset=utf-8")
+            raise HTTPException(status_code=500, detail=analysis.get("error"))
+        
+        return analysis
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)}, media_type="application/json; charset=utf-8")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
