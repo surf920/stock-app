@@ -75,18 +75,23 @@ if df.empty:
     st.error("No overlapping data found. Please check data source.")
     st.stop()
 
-# BTC/XLF Ratio
-df['Ratio'] = df['BTC'] / df['XLF']
+# BTC/XLF Ratio (Raw)
+df['Raw_Ratio'] = df['BTC'] / df['XLF']
 
 # Moving Averages
-df['Ratio_MA200'] = df['Ratio'].rolling(window=200).mean()
+df['Ratio_MA200'] = df['Raw_Ratio'].rolling(window=200).mean()
 df['TNX_MA20'] = df['TNX'].rolling(window=20).mean()
 df['DXY_MA20'] = df['DXY'].rolling(window=20).mean()
 
+# Strength Score (Trend Deviation)
+# Base = 1.0 (On Trend)
+df['Strength_Score'] = df['Raw_Ratio'] / df['Ratio_MA200']
+
 # Get latest values
 latest = df.iloc[-1]
-latest_ratio = latest['Ratio']
-latest_ratio_ma200 = latest['Ratio_MA200']
+latest_score = latest['Strength_Score']
+latest_raw_ratio = latest['Raw_Ratio']
+latest_ma200 = latest['Ratio_MA200']
 latest_tnx = latest['TNX']
 latest_tnx_ma20 = latest['TNX_MA20']
 latest_dxy = latest['DXY']
@@ -108,48 +113,34 @@ status_title = ""
 status_color = "gray"
 status_comment = ""
 
-# Pattern logic prioritization
-if latest_ratio > 0.60:
-    if latest_ratio > latest_ratio_ma200:
-        if macro_condition:
-            # Pattern A: Go Time (Green)
-            status_title = "🟢 Go Time (確定・フルスロットル)"
-            status_color = "green"
-            status_comment = "全条件クリア。BTCが選好され、マクロ追い風も吹いています。攻めの刻です。"
-        else:
-            # Pattern B: Go Time (Yellow)
-            status_title = "🟡 Go Time (準備・フライング注意)"
-            status_color = "orange" # Using orange for yellow
-            status_comment = "BTCは強いですが、逆風（金利高/ドル高）が吹いています。ダマシに注意しつつ打診買いの段階。"
-    else:
-         # Ratio > 0.60 but < MA200 (Technically Caution based on rule "Ratio < 200MA")
-         status_title = "🔴 Caution (株優位・劣勢)"
-         status_color = "red"
-         status_comment = "資金はBTCより『実需・株』を選んでいます。無理に攻める場面ではありません。"
+# Decision Logic based on Strength Score
+# Trend Deviation: > 1.05 (Strong), < 0.95 (Weak), 0.95-1.05 (Neutral)
 
-elif 0.55 <= latest_ratio <= 0.60:
-    if latest_ratio > latest_ratio_ma200:
-        # Pattern C: Wait
-        status_title = "🟡 Wait (様子見・休憩)"
-        status_color = "orange"
-        status_comment = "ジェットコースターは停車中。方向感が出るまでエネルギーを溜めています。"
-    else:
-        # Ratio < 200MA override
-        status_title = "🔴 Caution (株優位・劣勢)"
-        status_color = "red"
-        status_comment = "資金はBTCより『実需・株』を選んでいます。無理に攻める場面ではありません。"
+status_title = ""
+status_color = "gray"
+status_comment = ""
+score_pct = (latest_score - 1.0) * 100
 
-else: # Ratio < 0.55
-    # Pattern D: Caution
-    status_title = "🔴 Caution (株優位・劣勢)"
+if latest_score > 1.05:
+    # Pattern A: Go Time (Strong Trend)
+    status_title = f"🟢 Go Time (Score: {latest_score:.2f})"
+    status_color = "green"
+    status_comment = f"トレンドを {score_pct:.1f}% 上回る強さです。BTCが金融株を圧倒しており、攻めの刻です。"
+    
+    if not macro_condition:
+        status_comment += " (ただしマクロ逆風には注意)"
+
+elif 0.95 <= latest_score <= 1.05:
+    # Pattern B: Wait (Neutral / Consensus)
+    status_title = f"🟡 Wait (Score: {latest_score:.2f})"
+    status_color = "orange"
+    status_comment = f"トレンド付近（乖離 {score_pct:.1f}%）で膠着しています。次の方向感が出るまでエネルギーを溜めています。"
+
+else: # latest_score < 0.95
+    # Pattern C: Caution (Weak Trend)
+    status_title = f"🔴 Caution (Score: {latest_score:.2f})"
     status_color = "red"
-    status_comment = "資金はBTCより『実需・株』を選んでいます。無理に攻める場面ではありません。"
-
-# Explicit override check for Ratio < 200MA (Priority: D)
-if latest_ratio < latest_ratio_ma200:
-    status_title = "🔴 Caution (株優位・劣勢)"
-    status_color = "red"
-    status_comment = "資金はBTCより『実需・株』を選んでいます。無理に攻める場面ではありません。"
+    status_comment = f"トレンドを {abs(score_pct):.1f}% 下回る弱さです。資金はBTCより『実需・株』を選んでいます。無理に攻める場面ではありません。"
 
 # -----------------------------------------------------------------------------
 # UI Display
@@ -160,9 +151,11 @@ st.write(status_comment)
 
 # Macro Indicators Display (Small check)
 prev_day = df.iloc[-2]
+prev_score = prev_day['Strength_Score']
+
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("BTC/XLF Ratio", f"{latest_ratio:.4f}", delta=f"{latest_ratio - prev_day['Ratio']:.4f}")
-col2.metric("Ratio 200MA", f"{latest_ratio_ma200:.4f}")
+col1.metric("Strength Score", f"{latest_score:.2f}", delta=f"{latest_score - prev_score:.2f}", help="1.0 = トレンド(200MA)と同じ強さ")
+col2.metric("Raw Ratio (BTC/XLF)", f"{latest_raw_ratio:.2f}")
 col3.metric("US10Y (TNX)", f"{latest_tnx:.2f}%", f"{'📉低下(Bull)' if tnx_trend_down else '📈上昇(Bear)'}", delta_color="inverse")
 col4.metric("DXY Index", f"{latest_dxy:.2f}", f"{'📉弱含み(Bull)' if dxy_trend_weak else '📈強含み(Bear)'}", delta_color="inverse")
 
@@ -170,49 +163,59 @@ col4.metric("DXY Index", f"{latest_dxy:.2f}", f"{'📉弱含み(Bull)' if dxy_tr
 # -----------------------------------------------------------------------------
 # Chart
 # -----------------------------------------------------------------------------
+# Chart
+# -----------------------------------------------------------------------------
 fig = go.Figure()
 
-# Background Regions
-# We need min/max x and y to draw shapes.
+# Background Regions (Strength Score based)
 x_min = df.index[0]
 x_max = df.index[-1]
-y_min = df['Ratio'].min() * 0.95
-y_max = df['Ratio'].max() * 1.05
+# Y-axis range padding
+y_values = df['Strength_Score']
+y_min = min(y_values.min(), 0.90) * 0.98
+y_max = max(y_values.max(), 1.10) * 1.02
 
-# Green Zone (> 0.60)
+# Green Zone (> 1.05)
 fig.add_shape(type="rect",
-    x0=x_min, y0=0.60, x1=x_max, y1=y_max,
+    x0=x_min, y0=1.05, x1=x_max, y1=y_max,
     line=dict(width=0),
     fillcolor="rgba(0, 255, 0, 0.1)",
     layer="below"
 )
 
-# Red Zone (< 0.55)
+# Red Zone (< 0.95)
 fig.add_shape(type="rect",
-    x0=x_min, y0=y_min, x1=x_max, y1=0.55,
+    x0=x_min, y0=y_min, x1=x_max, y1=0.95,
     line=dict(width=0),
     fillcolor="rgba(255, 0, 0, 0.1)",
     layer="below"
 )
 
-# Threshold Lines
-fig.add_hline(y=0.60, line_dash="dot", line_color="green", annotation_text="0.60 (Bull Zone)", annotation_position="top left")
-fig.add_hline(y=0.55, line_dash="dot", line_color="red", annotation_text="0.55 (Bear Zone)", annotation_position="bottom left")
+# Threshold Lines & Center Line
+fig.add_hline(y=1.05, line_dash="dot", line_color="green", annotation_text="1.05 (+5% Strength)", annotation_position="top left")
+fig.add_hline(y=0.95, line_dash="dot", line_color="red", annotation_text="0.95 (-5% Weakness)", annotation_position="bottom left")
+fig.add_hline(y=1.00, line_width=2, line_color="white", annotation_text="1.00 (Trend Zero)", annotation_position="right")
 
-# Ratio Line
-fig.add_trace(go.Scatter(x=df.index, y=df['Ratio'], mode='lines', name='BTC/XLF Ratio', line=dict(color='blue', width=2)))
-
-# 200MA Line
-fig.add_trace(go.Scatter(x=df.index, y=df['Ratio_MA200'], mode='lines', name='200-day MA', line=dict(color='orange', width=2)))
+# Strength Score Line
+fig.add_trace(go.Scatter(x=df.index, y=df['Strength_Score'], mode='lines', name='Strength Score', line=dict(color='blue', width=2)))
 
 fig.update_layout(
-    title="BTC/XLF Ratio Trend (vs 200MA)",
-    yaxis_title="Ratio",
+    title="Strength Score Trend (Deviation from 200MA)",
+    yaxis_title="Strength Score (1.0 = On Trend)",
     xaxis_title="Date",
     height=600,
-    template="plotly_white",
+    template="plotly_dark", # Switch to dark to verify white line visibility? Or stick to white and use black/grey line. 
+    # Let's stick to what works. If template is plotly_white, white line is invisible.
+    # Let's use a Dark Grey line for 1.0 if background is white, or just use plotly_dark if user prefers dark mode look.
+    # The user didn't specify dark mode, but "White line" implies a dark background.
+    # However, existing code used plotly_white.
+    # I will change template to 'plotly_dark' to make "White Line" visible and look cool.
     hovermode="x unified"
 )
+# If using plotly_white, change neutral line to black/grey.
+# User Logic said: "基準線: 1.0 の位置に太い白線を引く" -> "Draw a thick white line at 1.0"
+# This strongly implies a dark background chart.
+# So I will set template="plotly_dark".
 
 st.plotly_chart(fig, use_container_width=True)
 
@@ -221,24 +224,17 @@ st.plotly_chart(fig, use_container_width=True)
 # -----------------------------------------------------------------------------
 with st.expander("💡 なぜこの指標を見るのか？（電車とジェットコースターの理論）"):
     st.markdown("""
-    ### 電車（金融株） vs ジェットコースター（ビットコイン）
+    ### モニターの見方：Strength Score (トレンド乖離率)
     
-    市場には2つの乗り物があります。
+    従来の「単純な割り算」ではなく、**「200日移動平均線からどれだけ離れているか（乖離率）」**を表示しています。
     
-    1.  **金融株 (XLF) = 普通の電車 🚃**
-        *   金利が上がると銀行が儲かるため、調子が良くなります。
-        *   実体経済に根差した「安定した動き」をします。
-        
-    2.  **ビットコイン (BTC) = ジェットコースター 🎢**
-        *   金利が下がると（お金が溢れると）調子が良くなります。
-        *   期待と流動性で動く「激しい動き」をします。
-        
-    ### このレシオ (BTC/XLF) の意味
+    *   **基準値 1.0**: ちょうどトレンドライン（200MA）の上に乗っています。
+    *   **Strength Score > 1.05 (緑ゾーン)**: トレンドを5%以上上回る「強い」状態です。Go Time.
+    *   **Strength Score < 0.95 (赤ゾーン)**: トレンドを5%以上下回る「弱い」状態です。Caution.
+    *   **0.95 〜 1.05 (黄色ゾーン)**: トレンド付近での攻防です。Wait.
+
+    ### なぜこの指標を見るのか？
     
-    *   **レシオ上昇 ⤴️**: 投資家が「安定」を捨てて「リスク（ジェットコースター）」を選んでいます。**攻めの相場**です。
-    *   **レシオ下落 ⤵️**: 投資家が「リスク」を嫌がり、「安定（電車）」に戻っています。これを「現金を増やす」動きと捉えるより、**「株（XLF）の方が選ばれている状態」**と定義する方が正確です。
-    
-    ### 0.60と0.55の壁
-    *   **0.60超え**: 本格的なバブル/強気相場の入り口。
-    *   **0.55割れ**: 明確な「リスクオフ」。無理して乗る必要はありません。
+    *   **BTC/XLFレシオ**: ビットコイン（リスク）と金融株（実需・金利）のどちらが選好されているか?
+    *   **トレンド乖離**: 単純な数値（0.6など）は時代の変化でズレますが、「トレンドとの距離」は常に一定の物差し（過熱感・売られすぎ）として機能します。
     """)
