@@ -1,70 +1,85 @@
-
 import streamlit as st
-import json
-import pandas as pd
-from core.market_indicators import market_indicators
-from core.agent_analysis import agent_analysis
+import requests
 
 st.set_page_config(page_title="AI Agent Analysis", page_icon="🤖", layout="wide")
 
-st.title("🤖 AI Agent Teams: Strategic Market Analysis")
-st.markdown("Claude 3.5 Sonnet (Agent) が市場指標を統合分析し、プロフェッショナルな投資判断を提供します。")
+st.title("🤖 AI Agent 市場分析")
+st.markdown("Claude APIを使用した総合市場分析")
 
-# サイドバー: APIキーの状態確認
-import os
-api_key = os.getenv("ANTHROPIC_API_KEY")
-if not api_key:
-    st.sidebar.error("⚠️ ANTHROPIC_API_KEY が設定されていません")
-    st.warning("分析を開始するには `.env` ファイルに `ANTHROPIC_API_KEY` を設定してください。")
-else:
-    st.sidebar.success("✅ Agent Active (Claude-3.5-Sonnet)")
+API_URL = "https://stock-app-production-8365.up.railway.app"
 
-# メインアクション
-if st.button("🧠 AIエージェントに分析を依頼する (Start Analysis)", type="primary", disabled=not api_key):
-    with st.spinner("Agent is analyzing market structures... (Takes 10-20s)"):
+if st.button("🔍 市場分析を実行", type="primary", use_container_width=True):
+    with st.spinner("AI Agentが市場を分析中... (10-30秒かかります)"):
         try:
-            # 1. データ収集
-            indicators = market_indicators.get_all_indicators()
-            
-            # 2. Agent分析実行
-            result = agent_analysis.analyze_market(indicators)
-            
-            if result.get("success"):
-                analysis = result.get("analysis", {})
-                
-                # --- 結果表示セクション ---
-                st.divider()
-                
-                # 1. 市場評価 (Assessment)
-                assess = analysis.get("market_assessment", {})
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Overall Risk", assess.get("overall_risk", "N/A"))
-                col2.metric("Confidence Score", f"{assess.get('confidence', 0)}/100")
-                col3.markdown(f"**Key Concerns:**\n" + "\n".join([f"- {x}" for x in assess.get("key_concerns", [])]))
+            response = requests.get(f"{API_URL}/api/agent/analyze", timeout=60)
+            data = response.json()
 
-                # 2. 推奨ポートフォリオ (Recommendations)
-                st.subheader("📊 Portfolio Allocation Strategy")
-                recs = analysis.get("portfolio_recommendations", [])
-                if recs:
-                    rec_df = pd.DataFrame(recs)
-                    st.dataframe(rec_df, use_container_width=True)
-                
-                # 3. 具体的なアクション (Specific Actions)
-                st.subheader("⚡ Specific Actions")
-                actions = analysis.get("specific_actions", [])
-                for action in actions:
-                    st.info(f"**{action.get('action')}**: {action.get('ticker', '')} - {action.get('rationale')}")
+            if data.get("success"):
+                analysis = data.get("analysis", {})
 
-                # 4. 生の思考プロセス (Raw Summary)
-                with st.expander("Show Agent's Full Summary"):
-                    st.write(analysis.get("summary", ""))
-                
+                st.markdown("---")
+                st.subheader("📊 市場評価")
+                col1, col2 = st.columns(2)
+                with col1:
+                    risk = analysis.get("market_assessment", {}).get("overall_risk", "N/A")
+                    st.metric("総合リスク", risk)
+                with col2:
+                    confidence = analysis.get("market_assessment", {}).get("confidence", "N/A")
+                    st.metric("信頼度", f"{confidence}%")
+
+                col3, col4 = st.columns(2)
+                with col3:
+                    st.markdown("**⚠️ 主な懸念点:**")
+                    for c in analysis.get("market_assessment", {}).get("key_concerns", []):
+                        st.warning(c)
+                with col4:
+                    st.markdown("**💡 投資機会:**")
+                    for o in analysis.get("market_assessment", {}).get("opportunities", []):
+                        st.success(o)
+
+                st.markdown("---")
+                st.subheader("💼 ポートフォリオ推奨")
+                for rec in analysis.get("portfolio_recommendations", []):
+                    action = rec.get("action", "")
+                    icon = {"買い": "🟢", "売り": "🔴", "ホールド": "🟡", "リバランス": "🔄"}.get(action, "📌")
+                    with st.expander(f"{icon} {action} - {rec.get('asset_class', '')} ({rec.get('target_allocation', '')})"):
+                        st.write(f"**理由:** {rec.get('reasoning', '')}")
+                        st.write(f"**緊急度:** {rec.get('urgency', '')}")
+
+                st.markdown("---")
+                st.subheader("🎯 具体的アクション")
+                for act in analysis.get("specific_actions", []):
+                    cv = act.get("confidence", 0)
+                    icon = "🟢" if cv >= 80 else "🟡" if cv >= 60 else "🔴"
+                    st.markdown(f"{icon} **{act.get('action', '')}** - {act.get('ticker', '')} (信頼度: {cv}%)")
+                    st.caption(act.get("rationale", ""))
+
+                st.markdown("---")
+                st.subheader("🛡️ リスク管理")
+                rm = analysis.get("risk_management", {})
+                c5, c6, c7 = st.columns(3)
+                c5.info(f"**損切り:** {rm.get('stop_loss_level', 'N/A')}")
+                c6.info(f"**サイズ:** {rm.get('position_sizing', 'N/A')}")
+                c7.info(f"**ヘッジ:** {rm.get('hedge_recommendation', 'N/A')}")
+
+                st.markdown("---")
+                st.subheader("📝 総合サマリー")
+                st.info(analysis.get("summary", "N/A"))
+                st.caption(f"分析時刻: {data.get('timestamp', '')}")
             else:
-                st.error(f"Analysis Failed: {result.get('error')}")
-                
+                st.error(f"分析エラー: {data.get('error', '不明')}")
+        except requests.exceptions.ConnectionError:
+            st.error("⚠️ APIサーバーに接続できません")
         except Exception as e:
-            st.error(f"System Error: {str(e)}")
+            st.error(f"エラー: {str(e)}")
 
-# 解説
-st.divider()
-st.caption("Powered by Anthropic Claude 3.5 Sonnet & Market Cycle AI")
+with st.sidebar:
+    st.markdown("### 📡 API状態")
+    try:
+        h = requests.get(f"{API_URL}/", timeout=5)
+        if h.status_code == 200:
+            st.success("✅ Railway API稼働中")
+        else:
+            st.error("❌ APIエラー")
+    except:
+        st.error("❌ API未接続")
