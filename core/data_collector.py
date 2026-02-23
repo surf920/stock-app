@@ -442,7 +442,11 @@ def analyze_portfolio_for_agent(df_portfolio):
             try:
                 divs = t.dividends
                 if divs is not None and len(divs) > 0:
-                    one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+                    # タイムゾーン対応
+                    now = pd.Timestamp.now()
+                    if divs.index.tz is not None:
+                        now = now.tz_localize(divs.index.tz)
+                    one_year_ago = now - pd.DateOffset(years=1)
                     recent_divs = divs[divs.index >= one_year_ago]
                     if len(recent_divs) > 0:
                         annual_div_per_share = float(recent_divs.sum())
