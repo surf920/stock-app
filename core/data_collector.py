@@ -436,40 +436,60 @@ def analyze_portfolio_for_agent(df_portfolio):
                 if len(sma20.dropna()) > 0 and len(sma50.dropna()) > 0:
                     trend = "上昇" if float(sma20.iloc[-1]) > float(sma50.iloc[-1]) else "下降"
 
-            # 個別Tickerで配当・セクター情報取得
-            t = yf.Ticker(ticker_symbol)
-            info = t.info or {}
-
-            # 配当
-            div_yield = info.get("dividendYield", 0) or 0
-            annual_div_per_share = 0
-            try:
-                divs = t.dividends
-                if divs is not None and len(divs) > 0:
-                    now = pd.Timestamp.now()
-                    if divs.index.tz is not None:
-                        now = now.tz_localize(divs.index.tz)
-                    one_year_ago = now - pd.DateOffset(years=1)
-                    recent_divs = divs[divs.index >= one_year_ago]
-                    if len(recent_divs) > 0:
-                        annual_div_per_share = float(recent_divs.sum())
-            except:
-                pass
-            if annual_div_per_share == 0:
-                dr = info.get("dividendRate", 0) or 0
-                if dr > 0:
-                    annual_div_per_share = float(dr)
-
-            # 数量
+            # 数量とCSV情報を先に取得
             symbol_rows = df_portfolio[df_portfolio["Symbol"].astype(str).str.strip() == symbol]
             quantity = 0
-            if "Quantity" in df_portfolio.columns and len(symbol_rows) > 0:
-                quantity = float(symbol_rows["Quantity"].sum())
-            elif "Position" in df_portfolio.columns and len(symbol_rows) > 0:
-                quantity = float(symbol_rows["Position"].sum())
+            position_value = 0
+            if len(symbol_rows) > 0:
+                if "Quantity" in df_portfolio.columns:
+                    quantity = float(symbol_rows["Quantity"].sum())
+                elif "Position" in df_portfolio.columns:
+                    quantity = float(symbol_rows["Position"].sum())
+                if "PositionValue" in df_portfolio.columns:
+                    position_value = float(symbol_rows["PositionValue"].sum())
+
+            # 個別Tickerで配当・セクター情報取得（タイムアウト対策付き）
+            info = {}
+            div_yield = 0
+            annual_div_per_share = 0
+            sector = "不明"
+            try:
+                t = yf.Ticker(ticker_symbol)
+                info = t.info or {}
+                div_yield = info.get("dividendYield", 0) or 0
+                sector = info.get("sector", "不明")
+
+                # 配当履歴から取得
+                try:
+                    divs = t.dividends
+                    if divs is not None and len(divs) > 0:
+                        now = pd.Timestamp.now()
+                        if divs.index.tz is not None:
+                            now = now.tz_localize(divs.index.tz)
+                        one_year_ago = now - pd.DateOffset(years=1)
+                        recent_divs = divs[divs.index >= one_year_ago]
+                        if len(recent_divs) > 0:
+                            annual_div_per_share = float(recent_divs.sum())
+                except:
+                    pass
+
+                # フォールバック1: dividendRate
+                if annual_div_per_share == 0:
+                    dr = info.get("dividendRate", 0) or 0
+                    if dr > 0:
+                        annual_div_per_share = float(dr)
+            except:
+                pass
+
+            # フォールバック2: dividendYield × 価格から概算
+            if annual_div_per_share == 0 and div_yield > 0 and current_price > 0:
+                annual_div_per_share = current_price * div_yield
+
+            # フォールバック3: PositionValueとdividendYieldから概算
+            if annual_div_per_share == 0 and div_yield > 0 and position_value > 0:
+                annual_div_per_share = (position_value / abs(quantity)) * div_yield if quantity != 0 else 0
 
             annual_dividend = annual_div_per_share * abs(quantity)
-            sector = info.get("sector", "不明")
 
             results.append({
                 "symbol": symbol,
