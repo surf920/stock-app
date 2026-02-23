@@ -275,13 +275,19 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 st.markdown("---")
                 st.subheader("🩺 ポートフォリオ診断")
 
-                col_h1, col_h2 = st.columns(2)
+                col_h1, col_h2, col_h3, col_h4 = st.columns(4)
                 with col_h1:
                     health = pd_diag.get("overall_health", "N/A")
                     health_icon = {"健全": "🟢", "注意": "🟡", "危険": "🔴"}.get(health, "⚪")
                     st.metric("ポートフォリオ健全度", f"{health_icon} {health}")
                 with col_h2:
                     st.metric("分散度スコア", f"{pd_diag.get('diversification_score', 'N/A')}/10")
+                with col_h3:
+                    annual_div = portfolio_data.get("total_annual_dividend_jpy", 0)
+                    st.metric("年間 配当金（予想）", f"¥{annual_div:,.0f}")
+                with col_h4:
+                    monthly_div = portfolio_data.get("monthly_dividend_jpy", 0)
+                    st.metric("月間 不労所得", f"¥{monthly_div:,.0f}")
 
                 st.markdown("**📋 保有銘柄の判定:**")
                 for h in pd_diag.get("holdings_analysis", []):

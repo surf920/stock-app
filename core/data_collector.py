@@ -434,6 +434,28 @@ def analyze_portfolio_for_agent(df_portfolio):
             # セクター
             sector = info.get("sector", "不明")
 
+            # 配当金額の取得
+            annual_div_per_share = 0
+            try:
+                divs = t.dividends
+                if divs is not None and len(divs) > 0:
+                    one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+                    recent_divs = divs[divs.index >= one_year_ago]
+                    if len(recent_divs) > 0:
+                        annual_div_per_share = float(recent_divs.sum())
+            except:
+                pass
+
+            # CSVから保有数量を取得
+            symbol_rows = df_portfolio[df_portfolio["Symbol"].astype(str).str.strip() == symbol]
+            quantity = 0
+            if "Quantity" in df_portfolio.columns:
+                quantity = float(symbol_rows["Quantity"].sum()) if len(symbol_rows) > 0 else 0
+            elif "Position" in df_portfolio.columns:
+                quantity = float(symbol_rows["Position"].sum()) if len(symbol_rows) > 0 else 0
+
+            annual_dividend = annual_div_per_share * abs(quantity)
+
             results.append({
                 "symbol": symbol,
                 "ticker": ticker_symbol,
@@ -444,6 +466,9 @@ def analyze_portfolio_for_agent(df_portfolio):
                 "div_yield": round(div_yield * 100, 2) if div_yield else 0,
                 "sector": sector,
                 "is_japan": is_japan,
+                "quantity": quantity,
+                "annual_dividend": round(annual_dividend, 2),
+                "annual_div_per_share": round(annual_div_per_share, 4),
             })
         except Exception as e:
             results.append({
@@ -452,7 +477,19 @@ def analyze_portfolio_for_agent(df_portfolio):
                 "error": str(e),
             })
 
-    return {"holdings": results, "usdjpy": usdjpy, "count": len(results)}
+    total_annual_div_usd = sum(h.get("annual_dividend", 0) for h in results if "error" not in h and not h.get("is_japan", False))
+    total_annual_div_jpy_stocks = sum(h.get("annual_dividend", 0) for h in results if "error" not in h and h.get("is_japan", False))
+    total_annual_div_jpy = total_annual_div_usd * usdjpy + total_annual_div_jpy_stocks
+    monthly_dividend_jpy = total_annual_div_jpy / 12
+
+    return {
+        "holdings": results,
+        "usdjpy": usdjpy,
+        "count": len(results),
+        "total_annual_dividend_jpy": round(total_annual_div_jpy),
+        "monthly_dividend_jpy": round(monthly_dividend_jpy),
+        "total_annual_dividend_usd": round(total_annual_div_usd, 2),
+    }
 
 
 def format_portfolio_for_prompt(portfolio_data):
