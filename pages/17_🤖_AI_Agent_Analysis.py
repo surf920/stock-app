@@ -26,7 +26,7 @@ if not ANTHROPIC_API_KEY:
 
 
 # --- データ収集 ---
-from core.data_collector import collect_all, format_for_prompt
+from core.data_collector import collect_all, format_for_prompt, parse_portfolio_csv, analyze_portfolio_for_agent, format_portfolio_for_prompt
 
 
 def call_claude_api(market_data_text):
@@ -67,6 +67,15 @@ def call_claude_api(market_data_text):
             "urgency": "高/中/低"
         }
     ],
+    "portfolio_diagnosis": {
+        "overall_health": "健全/注意/危険",
+        "diversification_score": "分散度スコア(1-10)",
+        "holdings_analysis": [
+            {"symbol": "銘柄", "verdict": "継続保有/利確検討/損切り検討/買い増し検討", "reason": "理由"}
+        ],
+        "rebalance_suggestions": ["リバランス提案1", "リバランス提案2"],
+        "dividend_outlook": "配当見通し"
+    },
     "specific_actions": [
         {
             "action": "具体的なアクション",
@@ -164,17 +173,38 @@ def call_claude_api(market_data_text):
 
 # --- メイン UI ---
 
+# --- ポートフォリオCSVアップロード（任意）---
+st.markdown("---")
+st.subheader("📂 ポートフォリオ連携（任意）")
+uploaded_file = st.file_uploader("IB証券のCSVをアップロードすると、保有銘柄も含めて分析します", type=["csv"])
+st.caption("※ CSVなしでも市場分析は実行できます")
+st.markdown("---")
+
 if st.button("🔍 全データ収集 → AI分析を実行", type="primary", use_container_width=True):
 
     # Step 1: データ収集
     with st.spinner("📊 全ページの指標データを収集中... (30-60秒)"):
         all_data = collect_all()
 
+    # ポートフォリオ処理
+    portfolio_data = None
+    portfolio_text = ""
+    if uploaded_file:
+        with st.spinner("📂 ポートフォリオを解析中..."):
+            df_portfolio, error = parse_portfolio_csv(uploaded_file)
+            if error:
+                st.error(f"CSV読み込みエラー: {error}")
+            elif df_portfolio is not None:
+                portfolio_data = analyze_portfolio_for_agent(df_portfolio)
+                portfolio_text = format_portfolio_for_prompt(portfolio_data)
+                st.success(f"✅ {portfolio_data['count']}銘柄のポートフォリオを解析完了")
+
     # 収集結果サマリー
     collected_count = sum(1 for k, v in all_data.items()
                          if k != "timestamp" and isinstance(v, (dict, list))
                          and not (isinstance(v, dict) and "error" in v))
-    st.success(f"✅ {collected_count}/11 カテゴリのデータを収集完了")
+    extra = f" + ポートフォリオ{portfolio_data['count']}銘柄" if portfolio_data else ""
+    st.success(f"✅ {collected_count}/11 カテゴリのデータを収集完了{extra}")
 
     # データプレビュー
     with st.expander("📋 収集したデータを確認"):
@@ -185,6 +215,8 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
     with st.spinner("🤖 Claude APIが市場を分析中... (10-30秒)"):
         try:
             market_text = format_for_prompt(all_data)
+            if portfolio_text:
+                market_text += "\n" + portfolio_text
             analysis = call_claude_api(market_text)
 
             # --- 結果表示 ---
@@ -236,6 +268,34 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                     st.error(s)
             if sa.get("reasoning"):
                 st.caption(sa["reasoning"])
+
+            # ポートフォリオ診断（CSVアップロード時）
+            pd_diag = analysis.get("portfolio_diagnosis", {})
+            if pd_diag and portfolio_data:
+                st.markdown("---")
+                st.subheader("🩺 ポートフォリオ診断")
+
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    health = pd_diag.get("overall_health", "N/A")
+                    health_icon = {"健全": "🟢", "注意": "🟡", "危険": "🔴"}.get(health, "⚪")
+                    st.metric("ポートフォリオ健全度", f"{health_icon} {health}")
+                with col_h2:
+                    st.metric("分散度スコア", f"{pd_diag.get('diversification_score', 'N/A')}/10")
+
+                st.markdown("**📋 保有銘柄の判定:**")
+                for h in pd_diag.get("holdings_analysis", []):
+                    verdict = h.get("verdict", "")
+                    v_icon = {"継続保有": "🟢", "利確検討": "🟡", "損切り検討": "🔴", "買い増し検討": "🔵"}.get(verdict, "⚪")
+                    st.markdown(f"{v_icon} **{h.get('symbol', '')}** - {verdict}: {h.get('reason', '')}")
+
+                if pd_diag.get("rebalance_suggestions"):
+                    st.markdown("**🔄 リバランス提案:**")
+                    for suggestion in pd_diag["rebalance_suggestions"]:
+                        st.info(suggestion)
+
+                if pd_diag.get("dividend_outlook"):
+                    st.caption(f"💰 配当見通し: {pd_diag['dividend_outlook']}")
 
             # ポートフォリオ推奨
             st.markdown("---")

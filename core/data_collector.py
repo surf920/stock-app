@@ -351,3 +351,127 @@ def format_for_prompt(data):
             lines.append(f"    → {p['top_outcome']}: {p['probability']}% (Vol: ${p['volume']:,.0f})")
 
     return "\n".join(lines)
+
+
+def parse_portfolio_csv(uploaded_file):
+    """IB証券CSVからポートフォリオデータを解析"""
+    import io
+    try:
+        lines = uploaded_file.getvalue().decode("utf-8", errors='replace').splitlines()
+        header_row_index = -1
+        for i, line in enumerate(lines):
+            if "Symbol" in line and ("ClientAccountID" in line or "Account" in line):
+                header_row_index = i
+                break
+        if header_row_index == -1:
+            return None, "CSVのヘッダーが見つかりません"
+
+        csv_text = "\n".join(lines[header_row_index:])
+        df = pd.read_csv(io.StringIO(csv_text))
+        if "Symbol" not in df.columns:
+            return None, "'Symbol' 列が見つかりません"
+        return df, None
+    except Exception as e:
+        return None, str(e)
+
+
+def analyze_portfolio_for_agent(df_portfolio):
+    """ポートフォリオの保有銘柄を分析してAI用テキストを生成"""
+    results = []
+    symbols = df_portfolio["Symbol"].dropna().unique()
+
+    # USD/JPYレート取得
+    try:
+        jpy_data = yf.download("JPY=X", period="1d", progress=False)
+        if not jpy_data.empty:
+            close = jpy_data["Close"]
+            if isinstance(close, pd.DataFrame):
+                usdjpy = float(close.iloc[-1, 0])
+            else:
+                usdjpy = float(close.iloc[-1])
+        else:
+            usdjpy = 150.0
+    except:
+        usdjpy = 150.0
+
+    for symbol in symbols:
+        if not isinstance(symbol, str) or symbol.strip() == "":
+            continue
+        symbol = symbol.strip()
+
+        # 日本株判定
+        is_japan = False
+        ticker_symbol = symbol
+        if symbol.isdigit() or (len(symbol) == 4 and symbol.isdigit()):
+            ticker_symbol = f"{symbol}.T"
+            is_japan = True
+
+        try:
+            t = yf.Ticker(ticker_symbol)
+            info = t.info or {}
+            hist = t.history(period="6mo")
+            if hist.empty:
+                continue
+
+            current_price = float(hist["Close"].iloc[-1])
+            price_6m_ago = float(hist["Close"].iloc[0])
+            change_6m = ((current_price - price_6m_ago) / price_6m_ago) * 100
+
+            # トレンド判定
+            sma20 = hist["Close"].rolling(20).mean()
+            sma50 = hist["Close"].rolling(50).mean()
+            if len(sma20.dropna()) > 0 and len(sma50.dropna()) > 0:
+                if float(sma20.iloc[-1]) > float(sma50.iloc[-1]):
+                    trend = "上昇"
+                else:
+                    trend = "下降"
+            else:
+                trend = "不明"
+
+            # 配当
+            div_yield = info.get("dividendYield", 0) or 0
+
+            # セクター
+            sector = info.get("sector", "不明")
+
+            results.append({
+                "symbol": symbol,
+                "ticker": ticker_symbol,
+                "name": info.get("shortName", symbol),
+                "price": round(current_price, 2),
+                "change_6m_pct": round(change_6m, 1),
+                "trend": trend,
+                "div_yield": round(div_yield * 100, 2) if div_yield else 0,
+                "sector": sector,
+                "is_japan": is_japan,
+            })
+        except Exception as e:
+            results.append({
+                "symbol": symbol,
+                "ticker": ticker_symbol,
+                "error": str(e),
+            })
+
+    return {"holdings": results, "usdjpy": usdjpy, "count": len(results)}
+
+
+def format_portfolio_for_prompt(portfolio_data):
+    """ポートフォリオデータをプロンプト用テキストに変換"""
+    if not portfolio_data or not portfolio_data.get("holdings"):
+        return ""
+
+    lines = []
+    lines.append(f"\n=== 保有ポートフォリオ (USD/JPY: {portfolio_data['usdjpy']:.1f}) ===")
+    lines.append(f"保有銘柄数: {portfolio_data['count']}")
+
+    for h in portfolio_data["holdings"]:
+        if "error" in h:
+            lines.append(f"  {h['symbol']}: データ取得エラー")
+            continue
+        arrow = "↑" if h["change_6m_pct"] > 0 else "↓" if h["change_6m_pct"] < 0 else "→"
+        trend_icon = "📈" if h["trend"] == "上昇" else "📉"
+        div_text = f" 配当{h['div_yield']}%" if h["div_yield"] > 0 else ""
+        jp = " [日本株]" if h["is_japan"] else ""
+        lines.append(f"  {h['symbol']} ({h['name']}): {h['price']} {arrow}{h['change_6m_pct']:+.1f}% {trend_icon}{h['trend']} {h['sector']}{div_text}{jp}")
+
+    return "\n".join(lines)
