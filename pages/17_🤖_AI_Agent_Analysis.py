@@ -199,6 +199,7 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 portfolio_data = analyze_portfolio_for_agent(df_portfolio)
                 portfolio_text = format_portfolio_for_prompt(portfolio_data)
                 st.success(f"✅ {portfolio_data['count']}銘柄のポートフォリオを解析完了")
+                st.info(f"💰 配当計算: 年間¥{portfolio_data.get('total_annual_dividend_jpy', 0):,.0f} / 月間¥{portfolio_data.get('monthly_dividend_jpy', 0):,.0f}")
 
     # 収集結果サマリー
     collected_count = sum(1 for k, v in all_data.items()
