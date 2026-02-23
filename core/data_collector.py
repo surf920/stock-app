@@ -332,7 +332,9 @@ def format_for_prompt(data):
                     lines.append(f"  {name}: {val}")
                 elif isinstance(val, dict):
                     if "price" in val:
-                        lines.append(f"  {name}: {val['price']} ({val.get('change_1m_pct', 'N/A')}%)")
+                        chg = val.get('change_1m_pct', 0)
+                        arrow = '↑' if chg > 0 else '↓' if chg < 0 else '→'
+                        lines.append(f"  {name}: {val['price']} ({arrow}{chg:+.2f}%)")
                     elif "value" in val:
                         lines.append(f"  {name}: {val['value']}")
                     else:
