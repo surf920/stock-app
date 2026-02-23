@@ -87,6 +87,15 @@ def call_claude_api(market_data_text):
         "market_implications": "予測市場から読み取れる市場への影響",
         "contrarian_opportunities": "逆張りの機会"
     },
+    "contrarian_view": {
+        "current_regime": "現在のレジーム（リスクオン/リスクオフ）",
+        "regime_reversal_triggers": ["反転トリガー1", "反転トリガー2", "反転トリガー3"],
+        "early_signals_to_watch": ["注目すべき先行指標1", "注目すべき先行指標2"],
+        "contrarian_trades": [
+            {"trade": "具体的な逆張りトレード", "trigger": "エントリー条件", "risk": "リスク"}
+        ],
+        "timeline": "反転が起きうる時間軸の目安"
+    },
     "summary": "200文字以内の総合サマリー"
 }
 
@@ -95,7 +104,11 @@ def call_claude_api(market_data_text):
 2. 矛盾するシグナルがあれば明示
 3. Polymarket予測と市場データの整合性を確認
 4. 具体的なティッカーと数値を含めた実行可能な推奨を提示
-5. リスク管理を最優先に考える"""
+5. リスク管理を最優先に考える
+6. 【逆張り分析】現在のレジームが反転する条件を具体的に分析すること:
+   - リスクオフ時: 何が起きればリスクオンに転換するか？どの指標が先行シグナルになるか？
+   - リスクオン時: 何が起きればリスクオフに転換するか？どの指標に警戒すべきか？
+   - 逆張りトレードの具体的なエントリー条件とリスクを明記"""
 
     user_message = f"""以下の市場データを分析してください。
 【指示】
@@ -257,6 +270,32 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                     st.markdown(f"**市場への影響:** {pi['market_implications']}")
                 if pi.get("contrarian_opportunities"):
                     st.markdown(f"**逆張り機会:** {pi['contrarian_opportunities']}")
+
+            # 逆張り分析
+            st.markdown("---")
+            st.subheader("🔄 レジーム反転分析（逆張り視点）")
+            cv = analysis.get("contrarian_view", {})
+            if cv:
+                regime = cv.get("current_regime", "N/A")
+                next_regime = "リスクオン" if "オフ" in regime else "リスクオフ"
+                st.info(f"📍 現在: **{regime}** → 次の **{next_regime}** への転換を分析")
+
+                st.markdown("**🔑 反転トリガー（これが起きたら流れが変わる）:**")
+                for i, trigger in enumerate(cv.get("regime_reversal_triggers", []), 1):
+                    st.warning(f"{i}. {trigger}")
+
+                st.markdown("**📡 先行シグナル（要ウォッチ）:**")
+                for signal in cv.get("early_signals_to_watch", []):
+                    st.info(f"👁 {signal}")
+
+                st.markdown("**💡 逆張りトレード案:**")
+                for trade in cv.get("contrarian_trades", []):
+                    with st.expander(f"📌 {trade.get('trade', '')}"):
+                        st.write(f"**エントリー条件:** {trade.get('trigger', '')}")
+                        st.write(f"**リスク:** {trade.get('risk', '')}")
+
+                if cv.get("timeline"):
+                    st.caption(f"⏱ 反転の時間軸目安: {cv['timeline']}")
 
             # リスク管理
             st.markdown("---")
