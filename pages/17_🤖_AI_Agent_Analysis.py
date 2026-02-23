@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import pandas as pd
 
 st.set_page_config(page_title="AI Agent Analysis", page_icon="🤖", layout="wide")
 
