@@ -399,10 +399,13 @@ def analyze_portfolio_for_agent(df_portfolio):
             continue
         symbol = symbol.strip()
 
-        # 日本株判定
+        # 日本株判定（CSVが 1489.T 形式の場合も対応）
         is_japan = False
         ticker_symbol = symbol
-        if symbol.isdigit() or (len(symbol) == 4 and symbol.isdigit()):
+        if symbol.endswith(".T"):
+            is_japan = True
+            ticker_symbol = symbol
+        elif symbol.isdigit():
             ticker_symbol = f"{symbol}.T"
             is_japan = True
 
