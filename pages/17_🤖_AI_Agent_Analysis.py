@@ -8,12 +8,17 @@ st.title("🤖 AI Agent 総合市場分析")
 st.markdown("全ページの指標データを収集し、Claude APIで統合分析を行います。")
 
 # --- API Key ---
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-if not ANTHROPIC_API_KEY:
-    try:
-        ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
-    except Exception:
-        pass
+ANTHROPIC_API_KEY = ""
+try:
+    ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+except Exception:
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Debug: show key status
+if ANTHROPIC_API_KEY:
+    st.sidebar.success(f"API Key: ...{ANTHROPIC_API_KEY[-8:]}")
+else:
+    st.sidebar.error("API Key not found")
 
 if not ANTHROPIC_API_KEY:
     st.error("⚠️ ANTHROPIC_API_KEY が設定されていません。Streamlit secrets または環境変数に設定してください。")
