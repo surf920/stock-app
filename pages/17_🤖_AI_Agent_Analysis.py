@@ -289,6 +289,35 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                     monthly_div = portfolio_data.get("monthly_dividend_jpy", 0)
                     st.metric("月間 不労所得", f"¥{monthly_div:,.0f}")
 
+                # 配当リスト
+                st.markdown("**💰 銘柄別 配当金リスト:**")
+                
+                div_rows = []
+                for h in portfolio_data.get("holdings", []):
+                    if "error" in h:
+                        continue
+                    annual_div = h.get("annual_dividend", 0)
+                    qty = h.get("quantity", 0)
+                    div_per_share = h.get("annual_div_per_share", 0)
+                    is_jp = h.get("is_japan", False)
+                    if is_jp:
+                        annual_jpy = annual_div
+                    else:
+                        annual_jpy = annual_div * portfolio_data.get("usdjpy", 150)
+                    div_rows.append({
+                        "銘柄": h.get("symbol", ""),
+                        "名前": h.get("name", ""),
+                        "保有数": int(abs(qty)),
+                        "1株配当": f"{div_per_share:.2f}",
+                        "年間配当": f"¥{annual_jpy:,.0f}" if annual_jpy > 0 else "-",
+                        "月間配当": f"¥{annual_jpy/12:,.0f}" if annual_jpy > 0 else "-",
+                        "利回り": f"{h.get('div_yield', 0):.1f}%",
+                    })
+                if div_rows:
+                    div_df = pd.DataFrame(div_rows)
+                    div_df = div_df.sort_values("年間配当", ascending=False, key=lambda x: x.str.replace("[¥,\-]", "", regex=True).replace("", "0").astype(float))
+                    st.dataframe(div_df, use_container_width=True, hide_index=True)
+
                 st.markdown("**📋 保有銘柄の判定:**")
                 for h in pd_diag.get("holdings_analysis", []):
                     verdict = h.get("verdict", "")
