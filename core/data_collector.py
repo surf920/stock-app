@@ -376,73 +376,76 @@ def parse_portfolio_csv(uploaded_file):
 
 
 def analyze_portfolio_for_agent(df_portfolio):
-    """ポートフォリオの保有銘柄を分析してAI用テキストを生成"""
+    """ポートフォリオの保有銘柄を分析してAI用テキストを生成（高速版）"""
     results = []
     symbols = df_portfolio["Symbol"].dropna().unique()
+    clean_symbols = []
+    for s in symbols:
+        s = str(s).strip()
+        if s:
+            clean_symbols.append(s)
 
     # USD/JPYレート取得
     try:
         jpy_data = yf.download("JPY=X", period="1d", progress=False)
         if not jpy_data.empty:
             close = jpy_data["Close"]
-            if isinstance(close, pd.DataFrame):
-                usdjpy = float(close.iloc[-1, 0])
-            else:
-                usdjpy = float(close.iloc[-1])
+            usdjpy = float(close.iloc[-1, 0]) if isinstance(close, pd.DataFrame) else float(close.iloc[-1])
         else:
             usdjpy = 150.0
     except:
         usdjpy = 150.0
 
-    for symbol in symbols:
-        if not isinstance(symbol, str) or symbol.strip() == "":
-            continue
-        symbol = symbol.strip()
+    # 一括ダウンロードで高速化
+    all_tickers = " ".join(clean_symbols)
+    try:
+        hist_data = yf.download(all_tickers, period="6mo", progress=False, group_by="ticker", threads=True)
+    except:
+        hist_data = pd.DataFrame()
 
-        # 日本株判定（CSVが 1489.T 形式の場合も対応）
-        is_japan = False
+    for symbol in clean_symbols:
+        is_japan = symbol.endswith(".T")
         ticker_symbol = symbol
-        if symbol.endswith(".T"):
-            is_japan = True
-            ticker_symbol = symbol
-        elif symbol.isdigit():
-            ticker_symbol = f"{symbol}.T"
-            is_japan = True
 
         try:
-            t = yf.Ticker(ticker_symbol)
-            info = t.info or {}
-            hist = t.history(period="6mo")
-            if hist.empty:
-                continue
+            # 一括データから取得
+            if len(clean_symbols) == 1:
+                hist = hist_data
+            else:
+                try:
+                    hist = hist_data[symbol] if symbol in hist_data.columns.get_level_values(0) else pd.DataFrame()
+                except:
+                    hist = pd.DataFrame()
 
-            current_price = float(hist["Close"].iloc[-1])
-            price_6m_ago = float(hist["Close"].iloc[0])
-            change_6m = ((current_price - price_6m_ago) / price_6m_ago) * 100
+            if isinstance(hist, pd.DataFrame) and not hist.empty and "Close" in hist.columns:
+                hist = hist.dropna(subset=["Close"])
+
+            if isinstance(hist, pd.DataFrame) and not hist.empty and len(hist) > 1:
+                current_price = float(hist["Close"].iloc[-1])
+                price_6m_ago = float(hist["Close"].iloc[0])
+                change_6m = ((current_price - price_6m_ago) / price_6m_ago) * 100
+            else:
+                current_price = 0
+                change_6m = 0
 
             # トレンド判定
-            sma20 = hist["Close"].rolling(20).mean()
-            sma50 = hist["Close"].rolling(50).mean()
-            if len(sma20.dropna()) > 0 and len(sma50.dropna()) > 0:
-                if float(sma20.iloc[-1]) > float(sma50.iloc[-1]):
-                    trend = "上昇"
-                else:
-                    trend = "下降"
-            else:
-                trend = "不明"
+            trend = "不明"
+            if isinstance(hist, pd.DataFrame) and len(hist) > 50:
+                sma20 = hist["Close"].rolling(20).mean()
+                sma50 = hist["Close"].rolling(50).mean()
+                if len(sma20.dropna()) > 0 and len(sma50.dropna()) > 0:
+                    trend = "上昇" if float(sma20.iloc[-1]) > float(sma50.iloc[-1]) else "下降"
+
+            # 個別Tickerで配当・セクター情報取得
+            t = yf.Ticker(ticker_symbol)
+            info = t.info or {}
 
             # 配当
             div_yield = info.get("dividendYield", 0) or 0
-
-            # セクター
-            sector = info.get("sector", "不明")
-
-            # 配当金額の取得
             annual_div_per_share = 0
             try:
                 divs = t.dividends
                 if divs is not None and len(divs) > 0:
-                    # タイムゾーン対応
                     now = pd.Timestamp.now()
                     if divs.index.tz is not None:
                         now = now.tz_localize(divs.index.tz)
@@ -452,16 +455,21 @@ def analyze_portfolio_for_agent(df_portfolio):
                         annual_div_per_share = float(recent_divs.sum())
             except:
                 pass
+            if annual_div_per_share == 0:
+                dr = info.get("dividendRate", 0) or 0
+                if dr > 0:
+                    annual_div_per_share = float(dr)
 
-            # CSVから保有数量を取得
+            # 数量
             symbol_rows = df_portfolio[df_portfolio["Symbol"].astype(str).str.strip() == symbol]
             quantity = 0
-            if "Quantity" in df_portfolio.columns:
-                quantity = float(symbol_rows["Quantity"].sum()) if len(symbol_rows) > 0 else 0
-            elif "Position" in df_portfolio.columns:
-                quantity = float(symbol_rows["Position"].sum()) if len(symbol_rows) > 0 else 0
+            if "Quantity" in df_portfolio.columns and len(symbol_rows) > 0:
+                quantity = float(symbol_rows["Quantity"].sum())
+            elif "Position" in df_portfolio.columns and len(symbol_rows) > 0:
+                quantity = float(symbol_rows["Position"].sum())
 
             annual_dividend = annual_div_per_share * abs(quantity)
+            sector = info.get("sector", "不明")
 
             results.append({
                 "symbol": symbol,
@@ -478,11 +486,7 @@ def analyze_portfolio_for_agent(df_portfolio):
                 "annual_div_per_share": round(annual_div_per_share, 4),
             })
         except Exception as e:
-            results.append({
-                "symbol": symbol,
-                "ticker": ticker_symbol,
-                "error": str(e),
-            })
+            results.append({"symbol": symbol, "ticker": ticker_symbol, "error": str(e)})
 
     total_annual_div_usd = sum(h.get("annual_dividend", 0) for h in results if "error" not in h and not h.get("is_japan", False))
     total_annual_div_jpy_stocks = sum(h.get("annual_dividend", 0) for h in results if "error" not in h and h.get("is_japan", False))
