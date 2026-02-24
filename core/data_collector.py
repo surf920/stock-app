@@ -507,7 +507,7 @@ def analyze_portfolio_for_agent(df_portfolio):
                 "price": round(current_price, 2),
                 "change_6m_pct": round(change_6m, 1),
                 "trend": trend,
-                "div_yield": round(div_yield * 100, 2) if div_yield and div_yield < 1 else round(div_yield, 2) if div_yield else 0,
+                "div_yield": round(div_yield * 100, 2) if div_yield and div_yield < 0.2 else round(div_yield, 2) if div_yield else 0,
                 "sector": sector,
                 "is_japan": is_japan,
                 "quantity": quantity,
