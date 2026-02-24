@@ -3,6 +3,8 @@ import pandas as pd
 import yfinance as yf
 import plotly.express as px
 import ssl
+import json
+import requests
 
 # --- 🚨 通信エラー回避 ---
 try:
@@ -17,6 +19,88 @@ else:
 st.set_page_config(page_title="半導体在庫サイクル", page_icon="📈", layout="wide")
 st.title("半導体サイクル & 在庫トラッカー 2026 🚀")
 st.markdown("現在値だけでなく、**「在庫が増えているか（悪化）」**、**「減っているか（改善）」**のトレンドを確認してください。")
+
+
+# --- AI要約機能 ---
+def call_semiconductor_ai(df_current, df_doi_hist):
+    """半導体在庫データをClaude APIで分析"""
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        st.error("ANTHROPIC_API_KEYが設定されていません")
+        return None
+
+    # データをテキスト化
+    data_text = "## 半導体企業 在庫データ (DOI = Days of Inventory)\n\n"
+    for _, row in df_current.iterrows():
+        doi_str = f"{row['DOI']:.1f}日" if row['DOI'] else "N/A"
+        price_str = f"${row['Price']:.2f}" if row['Price'] else "N/A"
+        data_text += f"- {row['Company']}: DOI={doi_str}, 株価={price_str}\n"
+
+    if not df_doi_hist.empty:
+        data_text += "\n## DOI推移 (四半期ごと)\n"
+        for company in df_doi_hist["Company"].unique():
+            hist = df_doi_hist[df_doi_hist["Company"] == company].sort_values("Date")
+            vals = [f"{r['Date'].strftime('%Y-%m')}: {r['DOI']:.1f}日" for _, r in hist.iterrows()]
+            data_text += f"- {company}: {' → '.join(vals)}\n"
+
+    system_prompt = """あなたは半導体業界の専門アナリストです。
+提供された在庫データ(DOI: Days of Inventory)を分析し、以下のJSON形式で回答してください。
+日本語で回答してください。
+
+【ルール】
+1. 必ず具体的な数値を引用すること（例: 「NVIDIAのDOIは117.5日」）
+2. DOI > 120日は在庫過多（警戒）、DOI < 80日は在庫不足、80-120日は適正
+3. 前回比でDOIが増加→在庫積み上がり（悪化）、減少→在庫消化（改善）
+4. データにない事実を捏造しないこと
+
+{
+    "cycle_phase": "回復初期/回復中期/ピーク/調整/底打ち のいずれか",
+    "summary": "3-4文で現在の半導体サイクル全体を要約",
+    "company_insights": [
+        {"company": "企業名", "status": "良好/注意/警戒", "comment": "1文コメント"}
+    ],
+    "investment_signal": "強気/やや強気/中立/やや弱気/弱気",
+    "key_points": ["ポイント1", "ポイント2", "ポイント3"],
+    "outlook": "今後3-6ヶ月の見通しを2-3文で"
+}"""
+
+    headers = {
+        "x-api-key": api_key,
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01"
+    }
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2048,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": data_text}]
+    }
+
+    try:
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        result = response.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        return json.loads(text.strip())
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
+
 
 # キャッシュ設定
 @st.cache_data(ttl=3600)
@@ -216,6 +300,52 @@ else:
         hide_index=True,
         use_container_width=True
     )
+
+
+    # 5. AI要約セクション
+    st.markdown("---")
+    st.subheader("🤖 AI半導体サイクル分析")
+    
+    if st.button("🧠 AIで在庫サイクルを分析", use_container_width=True):
+        with st.spinner("🔄 Claude AIが半導体サイクルを分析中..."):
+            ai_result = call_semiconductor_ai(df, df_doi_hist)
+        
+        if ai_result:
+            # サイクルフェーズと投資シグナル
+            col_ai1, col_ai2 = st.columns(2)
+            with col_ai1:
+                phase = ai_result.get("cycle_phase", "N/A")
+                phase_emoji = {"回復初期": "🌱", "回復中期": "📈", "ピーク": "🔝", "調整": "📉", "底打ち": "🔄"}.get(phase, "📊")
+                st.metric("サイクルフェーズ", f"{phase_emoji} {phase}")
+            with col_ai2:
+                signal = ai_result.get("investment_signal", "N/A")
+                signal_emoji = {"強気": "🟢", "やや強気": "🟢", "中立": "🟡", "やや弱気": "🟠", "弱気": "🔴"}.get(signal, "⚪")
+                st.metric("投資シグナル", f"{signal_emoji} {signal}")
+            
+            # サマリー
+            st.info(f"📋 **総合評価:** {ai_result.get('summary', 'N/A')}")
+            
+            # 企業別インサイト
+            insights = ai_result.get("company_insights", [])
+            if insights:
+                st.markdown("**🏢 企業別評価:**")
+                for ins in insights:
+                    status = ins.get("status", "")
+                    emoji = {"良好": "🟢", "注意": "🟡", "警戒": "🔴"}.get(status, "⚪")
+                    st.markdown(f"- {emoji} **{ins.get('company', '')}** ({status}): {ins.get('comment', '')}")
+            
+            # キーポイント
+            points = ai_result.get("key_points", [])
+            if points:
+                st.markdown("**🔑 重要ポイント:**")
+                for p in points:
+                    st.success(p)
+            
+            # 見通し
+            outlook = ai_result.get("outlook", "")
+            if outlook:
+                st.warning(f"🔮 **今後の見通し:** {outlook}")
+
 
     # 凡例（Markdownで安全に表示）
     st.markdown("""
