@@ -6,6 +6,15 @@ Phase 2でFastAPIにそのまま移行可能な設計
 
 import yfinance as yf
 import pandas as pd
+import ssl
+
+# SSL証明書エラー回避（Streamlit Cloud対応）
+try:
+    _create_unverified_https_context = ssl._create_unverified_https_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 import numpy as np
 import requests
 import json
