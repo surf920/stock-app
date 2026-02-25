@@ -165,6 +165,9 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             text = text[3:]
         if text.endswith("```"):
             text = text[:-3]
+        if not text.strip():
+            st.error("AIからの応答が空です。再試行してください。")
+            return None
         return json.loads(text.strip())
     except Exception as e:
         st.error(f"AI分析エラー: {e}")
@@ -225,7 +228,9 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             json=payload,
             timeout=60
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            st.error(f"API HTTP {response.status_code}: {response.text[:300]}")
+            return None
         result = response.json()
         text = ""
         for block in result.get("content", []):
@@ -238,6 +243,9 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             text = text[3:]
         if text.endswith("```"):
             text = text[:-3]
+        if not text.strip():
+            st.error("AIからの応答が空です。再試行してください。")
+            return None
         return json.loads(text.strip())
     except Exception as e:
         st.error(f"AI分析エラー: {e}")
