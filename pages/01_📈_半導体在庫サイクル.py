@@ -46,6 +46,8 @@ def call_semiconductor_ai(df_current, df_doi_hist):
 
     system_prompt = """あなたはブリッジウォーターやルネサンステクノロジーズで20年の経験を持つ半導体セクター専門のシニアポートフォリオマネージャーです。
 
+重要: 応答は必ずJSON形式のみで返してください。説明文やマークダウンは一切不要です。JSONオブジェクトだけを返してください。
+
 提供された在庫データ(DOI)を分析し、以下のJSON形式で回答してください。
 ファンドの投資委員会に提出するレポートのように、具体的な数値と因果関係を明確にしてください。
 
@@ -138,7 +140,7 @@ def call_semiconductor_ai(df_current, df_doi_hist):
         "anthropic-version": "2023-06-01"
     }
     payload = {
-        "model": "claude-3-haiku-20240307",
+        "model": "claude-3-5-haiku-20241022",
         "max_tokens": 4096,
         "system": system_prompt,
         "messages": [{"role": "user", "content": data_text}]
@@ -248,7 +250,7 @@ def call_semiconductor_ai(df_current, df_doi_hist):
         "anthropic-version": "2023-06-01"
     }
     payload = {
-        "model": "claude-3-haiku-20240307",
+        "model": "claude-3-5-haiku-20241022",
         "max_tokens": 2048,
         "system": system_prompt,
         "messages": [{"role": "user", "content": data_text}]
