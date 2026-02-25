@@ -252,7 +252,7 @@ try:
                         "content-type": "application/json"
                     }
                     payload = {
-                        "model": "claude-3-5-sonnet-20241022",
+                        "model": "claude-sonnet-4-20250514",
                         "max_tokens": 3000,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": diag_text}]

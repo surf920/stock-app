@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+from api_helper import call_anthropic_api
 import plotly.express as px
 import plotly.graph_objects as go
 import json
@@ -159,21 +160,13 @@ def call_polymarket_ai(all_markets, categories):
 }"""
 
     headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
-    payload = {"model": "claude-3-5-sonnet-20241022", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
 
     try:
-        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)
-        response.raise_for_status()
-        result = response.json()
-        text = ""
-        for block in result.get("content", []):
-            if block.get("type") == "text":
-                text += block["text"]
-        text = text.strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
-        return json.loads(text.strip())
+        result_data, api_error = call_anthropic_api(headers, payload)
+        if api_error:
+            return None
+        return result_data
     except Exception as e:
         st.error(f"AI分析エラー: {e}")
         return None
