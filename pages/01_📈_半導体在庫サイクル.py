@@ -6,6 +6,7 @@ import ssl
 import json
 import re
 import requests
+from api_helper import call_anthropic_api
 
 # --- 🚨 通信エラー回避 ---
 try:
@@ -140,151 +141,17 @@ def call_semiconductor_ai(df_current, df_doi_hist):
         "anthropic-version": "2023-06-01"
     }
     payload = {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4-20250514",
         "max_tokens": 4096,
         "system": system_prompt,
         "messages": [{"role": "user", "content": data_text}]
     }
 
-    try:
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=90
-        )
-        if response.status_code != 200:
-            st.error(f"API HTTP {response.status_code}: リトライしてください")
-            return None
-        result = response.json()
-        text = ""
-        for block in result.get("content", []):
-            if block.get("type") == "text":
-                text += block["text"]
-        text = text.strip()
-        if not text:
-            st.error("AIからの応答が空です。再試行してください。")
-            return None
-        # JSON抽出（マークダウンフェンス除去 + 正規表現フォールバック）
-        clean = text
-        if clean.startswith("```json"):
-            clean = clean[7:]
-        if clean.startswith("```"):
-            clean = clean[3:]
-        if clean.endswith("```"):
-            clean = clean[:-3]
-        clean = clean.strip()
-        try:
-            return json.loads(clean)
-        except json.JSONDecodeError:
-            # 正規表現でJSON部分を抽出
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                return json.loads(json_match.group())
-            st.error("AI応答のJSON解析に失敗しました")
-            with st.expander("AI応答の内容"):
-                st.code(text[:1000])
-            return None
-    except Exception as e:
-        st.error(f"AI分析エラー: {e}")
+    result_data, api_error = call_anthropic_api(headers, payload)
+    if api_error:
+        st.error(f"❌ {api_error}")
         return None
-        result = response.json()
-        text = ""
-        for block in result.get("content", []):
-            if block.get("type") == "text":
-                text += block["text"]
-        text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        if not text.strip():
-            st.error("AIからの応答が空です。再試行してください。")
-            return None
-        return json.loads(text.strip())
-    except Exception as e:
-        st.error(f"AI分析エラー: {e}")
-        return None
-
-
-    # データをテキスト化
-    data_text = "## 半導体企業 在庫データ (DOI = Days of Inventory)\n\n"
-    for _, row in df_current.iterrows():
-        doi_str = f"{row['DOI']:.1f}日" if row['DOI'] else "N/A"
-        price_str = f"${row['Price']:.2f}" if row['Price'] else "N/A"
-        data_text += f"- {row['Company']}: DOI={doi_str}, 株価={price_str}\n"
-
-    if not df_doi_hist.empty:
-        data_text += "\n## DOI推移 (四半期ごと)\n"
-        for company in df_doi_hist["Company"].unique():
-            hist = df_doi_hist[df_doi_hist["Company"] == company].sort_values("Date")
-            vals = [f"{r['Date'].strftime('%Y-%m')}: {r['DOI']:.1f}日" for _, r in hist.iterrows()]
-            data_text += f"- {company}: {' → '.join(vals)}\n"
-
-    system_prompt = """あなたは半導体業界の専門アナリストです。
-提供された在庫データ(DOI: Days of Inventory)を分析し、以下のJSON形式で回答してください。
-日本語で回答してください。
-
-【ルール】
-1. 必ず具体的な数値を引用すること（例: 「NVIDIAのDOIは117.5日」）
-2. DOI > 120日は在庫過多（警戒）、DOI < 80日は在庫不足、80-120日は適正
-3. 前回比でDOIが増加→在庫積み上がり（悪化）、減少→在庫消化（改善）
-4. データにない事実を捏造しないこと
-
-{
-    "cycle_phase": "回復初期/回復中期/ピーク/調整/底打ち のいずれか",
-    "summary": "3-4文で現在の半導体サイクル全体を要約",
-    "company_insights": [
-        {"company": "企業名", "status": "良好/注意/警戒", "comment": "1文コメント"}
-    ],
-    "investment_signal": "強気/やや強気/中立/やや弱気/弱気",
-    "key_points": ["ポイント1", "ポイント2", "ポイント3"],
-    "outlook": "今後3-6ヶ月の見通しを2-3文で"
-}"""
-
-    headers = {
-        "x-api-key": api_key,
-        "content-type": "application/json",
-        "anthropic-version": "2023-06-01"
-    }
-    payload = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 2048,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": data_text}]
-    }
-
-    try:
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
-        if response.status_code != 200:
-            st.error(f"API HTTP {response.status_code}: {response.text[:300]}")
-            return None
-        result = response.json()
-        text = ""
-        for block in result.get("content", []):
-            if block.get("type") == "text":
-                text += block["text"]
-        text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        if not text.strip():
-            st.error("AIからの応答が空です。再試行してください。")
-            return None
-        return json.loads(text.strip())
-    except Exception as e:
-        st.error(f"AI分析エラー: {e}")
-        return None
+    return result_data
 
 
 # キャッシュ設定
