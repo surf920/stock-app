@@ -109,3 +109,6 @@ try:
     else:
         st.info("SaaSデータなし")
 
+
+except Exception as e:
+    st.error(f"⚠️ エラーが発生しました: {e}")
