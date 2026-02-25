@@ -274,63 +274,394 @@ if "Gold" in market_data:
 
 
 # -----------------------------------------------------------------------------
-# 4. Agent Teams AI Analysis
+# 4. AI覚醒者分析
 # -----------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("🤖 Agent Teams 市場分析 (Powered by Claude 3)")
-st.caption("市場の歪み(DAI)、サイクル、バブルスコアを総合的に分析します。")
+def call_awakener_ai(phase_pct, age, moon_msg, vix_val, vix_change, gold_val, gold_change, gurdjieff_alarm, year_12_ago, year_36_ago, year_60_ago):
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        st.error("ANTHROPIC_API_KEYが設定されていません")
+        return None
 
-# Analyze Button
-if st.button("🔮 アリスに分析を依頼する", type="primary"):
-    with st.spinner("Agent Teamsが協議中... (約10-20秒かかります)"):
-        try:
-            # API Call (Localhost)
-            # サーバーが起動している前提 (api/main.py)
-            response = requests.get("http://localhost:8000/api/agent/analyze", timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                if result.get("success"):
-                    analysis = result.get("analysis", {})
-                    
-                    # Summary
-                    st.success("✅ 分析完了")
-                    
-                    # Layout
-                    col_summary, col_action = st.columns([2, 1])
-                    
-                    with col_summary:
-                        st.markdown("### 📝 エグゼクティブ・サマリー")
-                        st.info(analysis.get("summary", "サマリーなし"))
-                        
-                        st.markdown("### ⚠️ 市場評価")
-                        assessment = analysis.get("market_assessment", {})
-                        st.write(f"**総合リスク**: {assessment.get('overall_risk')}")
-                        st.write(f"**確信度**: {assessment.get('confidence')}%")
-                        
-                        st.markdown("**主な懸念点:**")
-                        for concern in assessment.get("key_concerns", []):
-                            st.write(f"- {concern}")
-                            
-                    with col_action:
-                        st.markdown("### 🛡️ 推奨アクション")
-                        for item in analysis.get("portfolio_recommendations", []):
-                            st.markdown(f"**{item.get('asset_class')}**: {item.get('action')}")
-                            st.caption(f"理由: {item.get('reasoning')}")
-                            
-                    # Detailed Actions
-                    with st.expander("📊 詳細な投資判断を見る"):
-                        st.json(analysis)
-                        
-                else:
-                    st.error(f"分析エラー: {result.get('error')}")
-            else:
-                st.error(f"API接続エラー: Status {response.status_code}")
-                st.write(response.text)
-                
-        except requests.exceptions.ConnectionError:
-            st.error("❌ APIサーバーに接続できません。")
-            st.warning("`uvicorn api.main:app --reload` でAPIサーバーを起動してください。")
-        except Exception as e:
-            st.error(f"予期せぬエラー: {e}")
+    data_text = f"""## 覚醒者モニター データ
+
+### 月齢
+- 月相: {phase_pct:.1f}% (月齢: {age:.1f}日)
+- 状態: {moon_msg}
+
+### 恐怖指標
+- VIX: {vix_val:.2f} (前日比: {vix_change:+.1f}%)
+- グルジェフアラーム: {"発動中（パニック状態）" if gurdjieff_alarm else "通常"}
+
+### 安全資産
+- Gold: ${gold_val:.1f} (前日比: {gold_change:+.1f}%)
+
+### フラクタルサイクル
+- 12年前 ({year_12_ago}年): 木星サイクル
+- 36年前 ({year_36_ago}年): 土星・冥王星サイクル
+- 60年前 ({year_60_ago}年): 還暦サイクル"""
+
+    system_prompt = """あなたはジョージ・ソロス、レイ・ダリオ、そしてグルジェフの思想を統合した「覚醒した投資家」です。
+市場の機械的反応（パニック・陶酔）を見抜き、「Self-Remembering（自己想起）」の視点から市場を分析します。
+
+【重要】現在の日付は2026年2月です。全ての予測は2026年2月時点からの未来について述べてください。
+
+提供されたデータを分析し、以下のJSON形式で回答してください。
+
+【分析の哲学】
+1. 市場参加者の大半は「機械的」に反応している（恐怖で売り、陶酔で買う）
+2. 覚醒した投資家は群衆の機械的反応を「観察」し、逆を行く
+3. 月齢サイクル、フラクタルサイクルは「集合無意識」のリズムを示す
+4. VIXは市場の「機械的恐怖」、Goldは「本質的価値への回帰」を示す
+5. 具体的な数値を必ず引用すること
+
+{
+    "awakening_status": {
+        "consciousness_level": "覚醒/半覚醒/機械的/パニック のいずれか",
+        "headline": "市場の意識状態を1行で",
+        "crowd_behavior": "群衆が今どんな機械的反応をしているか。2文で",
+        "contrarian_insight": "覚醒者が見ている真実。群衆が見逃していること。2文で"
+    },
+    "moon_analysis": {
+        "current_phase_meaning": "現在の月相が市場心理に与える影響。2文で",
+        "historical_pattern": "満月/新月付近の市場パターンの傾向。1文で",
+        "action_guidance": "月齢に基づく行動指針。1文で"
+    },
+    "fractal_cycles": {
+        "year_12": {
+            "theme": "12年前のテーマと現在の類似性。2文で",
+            "lesson": "12年前から学ぶべき教訓。1文で"
+        },
+        "year_36": {
+            "theme": "36年前のテーマと現在の類似性。2文で",
+            "lesson": "36年前から学ぶべき教訓。1文で"
+        },
+        "year_60": {
+            "theme": "60年前のテーマと現在の類似性。2文で",
+            "lesson": "60年前から学ぶべき教訓。1文で"
+        },
+        "convergence": "3つのサイクルが同時に示唆していること。2-3文で"
+    },
+    "fear_greed_diagnosis": {
+        "vix_reading": "VIXの数値が示す市場の機械的状態。2文で",
+        "gold_reading": "Goldの動きが示す本質的な動き。2文で",
+        "mechanical_trap": "今、投資家が陥りやすい機械的な罠は何か。2文で"
+    },
+    "forward_scenarios": {
+        "base_case": {
+            "probability": 50,
+            "title": "メインシナリオ",
+            "narrative": "覚醒者の視点から見た今後3-6ヶ月の展開。3-4文",
+            "investment_action": "具体的な投資アクション"
+        },
+        "awakened_opportunity": {
+            "probability": 25,
+            "title": "覚醒者だけが見えるチャンス",
+            "narrative": "群衆が恐怖/陶酔で見逃しているチャンス。3-4文",
+            "investment_action": "具体的アクション"
+        },
+        "mechanical_danger": {
+            "probability": 25,
+            "title": "機械的反応が招く危険",
+            "narrative": "群衆の機械的行動が引き起こすリスク。3-4文",
+            "investment_action": "具体的アクション"
+        }
+    },
+    "self_remembering_practice": {
+        "todays_meditation": "今日の市場を前にした瞑想的考察。2-3文。詩的に。",
+        "do_not": "今日、機械的にやってはいけないこと",
+        "do_instead": "代わりに覚醒者として取るべき行動"
+    },
+    "risk_monitor": {
+        "watch_items": ["監視項目1", "監視項目2", "監視項目3"],
+        "next_inflection": "次の転換点の予測"
+    }
+}"""
+
+    headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    try:
+        resp = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)
+        resp.raise_for_status()
+        result = resp.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if text.startswith("```json"): text = text[7:]
+        if text.startswith("```"): text = text[3:]
+        if text.endswith("```"): text = text[:-3]
+        return json.loads(text.strip())
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
+
+st.markdown("---")
+st.subheader("🤖 AI覚醒者分析")
+st.caption("グルジェフ×ソロス×ダリオ - 覚醒した投資家の視点")
+
+if st.button("🔮 覚醒者の分析を実行", type="primary", use_container_width=True):
+    with st.spinner("🧘 覚醒者が市場を観照中..."):
+        ai_result = call_awakener_ai(phase_pct, age, moon_msg, vix_val, vix_change, gold_val, gold_change, gurdjieff_alarm, year_12_ago, year_36_ago, year_60_ago)
+
+    if ai_result:
+        # 覚醒ステータス
+        awaken = ai_result.get("awakening_status", {})
+        level = awaken.get("consciousness_level", "")
+        level_emoji = {"覚醒": "🟢", "半覚醒": "🟡", "機械的": "🟠", "パニック": "🔴"}.get(level, "⚪")
+
+        st.metric("市場の意識レベル", f"{level_emoji} {level}")
+        st.info(f"🌌 **{awaken.get('headline', '')}**")
+
+        col_cr, col_ci = st.columns(2)
+        with col_cr:
+            st.markdown("**🤖 群衆の機械的反応:**")
+            st.markdown(awaken.get("crowd_behavior", ""))
+        with col_ci:
+            st.markdown("**👁️ 覚醒者の洞察:**")
+            st.markdown(awaken.get("contrarian_insight", ""))
+        st.markdown("---")
+
+        # 月齢分析
+        moon_a = ai_result.get("moon_analysis", {})
+        if moon_a:
+            st.markdown("### 🌙 月齢サイクル分析")
+            st.markdown(moon_a.get("current_phase_meaning", ""))
+            st.caption(f"📊 {moon_a.get('historical_pattern', '')}")
+            st.success(f"🎯 **行動指針:** {moon_a.get('action_guidance', '')}")
+        st.markdown("---")
+
+        # フラクタルサイクル
+        fractal = ai_result.get("fractal_cycles", {})
+        if fractal:
+            st.markdown("### 🕰️ フラクタルサイクル AI分析")
+            col_f1, col_f2, col_f3 = st.columns(3)
+            y12 = fractal.get("year_12", {})
+            with col_f1:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #3498db;">
+                    <h4 style="color: #3498db; margin: 0 0 8px 0;">🪐 12年前 ({year_12_ago})</h4>
+                    <p style="color: #ddd; font-size: 0.85em;">{y12.get('theme', '')}</p>
+                    <p style="color: #3498db; font-size: 0.8em;">💡 {y12.get('lesson', '')}</p>
+                </div>""", unsafe_allow_html=True)
+            y36 = fractal.get("year_36", {})
+            with col_f2:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #f39c12;">
+                    <h4 style="color: #f39c12; margin: 0 0 8px 0;">☠️ 36年前 ({year_36_ago})</h4>
+                    <p style="color: #ddd; font-size: 0.85em;">{y36.get('theme', '')}</p>
+                    <p style="color: #f39c12; font-size: 0.8em;">💡 {y36.get('lesson', '')}</p>
+                </div>""", unsafe_allow_html=True)
+            y60 = fractal.get("year_60", {})
+            with col_f3:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #e74c3c;">
+                    <h4 style="color: #e74c3c; margin: 0 0 8px 0;">🔄 60年前 ({year_60_ago})</h4>
+                    <p style="color: #ddd; font-size: 0.85em;">{y60.get('theme', '')}</p>
+                    <p style="color: #e74c3c; font-size: 0.8em;">💡 {y60.get('lesson', '')}</p>
+                </div>""", unsafe_allow_html=True)
+            convergence = fractal.get("convergence", "")
+            if convergence:
+                st.warning(f"🔮 **3サイクルの収束:** {convergence}")
+        st.markdown("---")
+
+        # 恐怖・貪欲診断
+        fg = ai_result.get("fear_greed_diagnosis", {})
+        if fg:
+            st.markdown("### 😰 恐怖と貪欲の診断")
+            col_fg1, col_fg2 = st.columns(2)
+            with col_fg1:
+                st.markdown(f"**😰 VIX（機械的恐怖）:** {fg.get('vix_reading', '')}")
+            with col_fg2:
+                st.markdown(f"**🥇 Gold（本質的価値）:** {fg.get('gold_reading', '')}")
+            st.error(f"⚡ **機械的な罠:** {fg.get('mechanical_trap', '')}")
+        st.markdown("---")
+
+        # シナリオ分析
+        st.markdown("### 🔮 フォワードシナリオ分析")
+        scenarios = ai_result.get("forward_scenarios", {})
+        base = scenarios.get("base_case", {})
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border-left: 4px solid #8e44ad; margin-bottom: 15px;">
+            <h4 style="color: #8e44ad; margin-top: 0;">🌌 メイン ({base.get('probability', 50)}%): {base.get('title', '')}</h4>
+            <p style="color: #ddd;">{base.get('narrative', '')}</p>
+            <p style="color: #8e44ad; margin-bottom: 0;">💼 {base.get('investment_action', '')}</p>
+        </div>""", unsafe_allow_html=True)
+
+        col_aw, col_md = st.columns(2)
+        awake_opp = scenarios.get("awakened_opportunity", {})
+        with col_aw:
+            st.markdown(f"""<div style="background: #0a2a1a; padding: 15px; border-radius: 10px; border-left: 4px solid #09AB3B;">
+                <h4 style="color: #09AB3B; margin-top: 0;">👁️ 覚醒者のチャンス ({awake_opp.get('probability', 25)}%)</h4>
+                <p style="color: #2ecc71; font-weight: bold;">{awake_opp.get('title', '')}</p>
+                <p style="color: #ddd; font-size: 0.9em;">{awake_opp.get('narrative', '')}</p>
+                <p style="color: #09AB3B; font-size: 0.85em;">💼 {awake_opp.get('investment_action', '')}</p>
+            </div>""", unsafe_allow_html=True)
+        mech_danger = scenarios.get("mechanical_danger", {})
+        with col_md:
+            st.markdown(f"""<div style="background: #2a0a0a; padding: 15px; border-radius: 10px; border-left: 4px solid #FF4B4B;">
+                <h4 style="color: #FF4B4B; margin-top: 0;">🤖 機械的な危険 ({mech_danger.get('probability', 25)}%)</h4>
+                <p style="color: #e74c3c; font-weight: bold;">{mech_danger.get('title', '')}</p>
+                <p style="color: #ddd; font-size: 0.9em;">{mech_danger.get('narrative', '')}</p>
+                <p style="color: #FF4B4B; font-size: 0.85em;">💼 {mech_danger.get('investment_action', '')}</p>
+            </div>""", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Self-Remembering Practice
+        practice = ai_result.get("self_remembering_practice", {})
+        if practice:
+            st.markdown("### 🧘 今日のSelf-Remembering")
+            st.markdown(f"""<div style="background: linear-gradient(135deg, #0a0a2e, #1a1a3e); padding: 20px; border-radius: 10px; border: 1px solid #8e44ad;">
+                <p style="color: #bb8fce; font-style: italic; font-size: 1.1em;">{practice.get('todays_meditation', '')}</p>
+                <p style="color: #e74c3c; margin-top: 10px;">🚫 <b>やってはいけないこと:</b> {practice.get('do_not', '')}</p>
+                <p style="color: #2ecc71;">✅ <b>覚醒者として:</b> {practice.get('do_instead', '')}</p>
+            </div>""", unsafe_allow_html=True)
+        st.markdown("---")
+
+        rm = ai_result.get("risk_monitor", {})
+        st.markdown("### ⚠️ リスクモニター")
+        watch = rm.get("watch_items", [])
+        if watch:
+            for w in watch:
+                st.markdown(f"- 👁️ {w}")
+        inflection = rm.get("next_inflection", "")
+        if inflection:
+            st.error(f"🔄 **次の転換点:** {inflection}")
+# -----------------------------------------------------------------------------
+# 4. AI覚醒者分析
+# -----------------------------------------------------------------------------
+def call_awakener_ai(phase_pct, age, moon_msg, vix_val, vix_change, gold_val, gold_change, gurdjieff_alarm, year_12_ago, year_36_ago, year_60_ago):
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        st.error("ANTHROPIC_API_KEYが設定されていません")
+        return None
+
+    data_text = f"""## 覚醒者モニター データ
+### 月齢
+- 月相: {phase_pct:.1f}% (月齢: {age:.1f}日)
+- 状態: {moon_msg}
+### 恐怖指標
+- VIX: {vix_val:.2f} (前日比: {vix_change:+.1f}%)
+- グルジェフアラーム: {"発動中" if gurdjieff_alarm else "通常"}
+### 安全資産
+- Gold: ${gold_val:.1f} (前日比: {gold_change:+.1f}%)
+### フラクタルサイクル
+- 12年前 ({year_12_ago}年): 木星サイクル
+- 36年前 ({year_36_ago}年): 土星・冥王星サイクル
+- 60年前 ({year_60_ago}年): 還暦サイクル"""
+
+    system_prompt = """あなたはジョージ・ソロス、レイ・ダリオ、グルジェフの思想を統合した覚醒した投資家です。
+市場の機械的反応を見抜きSelf-Rememberingの視点から分析します。
+【重要】現在の日付は2026年2月です。
+【分析の哲学】
+1. 市場参加者の大半は機械的に反応している
+2. 覚醒した投資家は群衆の機械的反応を観察し逆を行く
+3. 月齢・フラクタルサイクルは集合無意識のリズムを示す
+4. VIXは機械的恐怖、Goldは本質的価値への回帰を示す
+5. 具体的な数値を必ず引用すること
+以下のJSON形式で回答:
+{"awakening_status":{"consciousness_level":"覚醒/半覚醒/機械的/パニック","headline":"1行","crowd_behavior":"2文","contrarian_insight":"2文"},"moon_analysis":{"current_phase_meaning":"2文","historical_pattern":"1文","action_guidance":"1文"},"fractal_cycles":{"year_12":{"theme":"2文","lesson":"1文"},"year_36":{"theme":"2文","lesson":"1文"},"year_60":{"theme":"2文","lesson":"1文"},"convergence":"2-3文"},"fear_greed_diagnosis":{"vix_reading":"2文","gold_reading":"2文","mechanical_trap":"2文"},"forward_scenarios":{"base_case":{"probability":50,"title":"","narrative":"3-4文","investment_action":""},"awakened_opportunity":{"probability":25,"title":"","narrative":"3-4文","investment_action":""},"mechanical_danger":{"probability":25,"title":"","narrative":"3-4文","investment_action":""}},"self_remembering_practice":{"todays_meditation":"2-3文詩的に","do_not":"","do_instead":""},"risk_monitor":{"watch_items":["1","2","3"],"next_inflection":""}}"""
+
+    headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    try:
+        resp = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)
+        resp.raise_for_status()
+        result = resp.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if text.startswith("```json"): text = text[7:]
+        if text.startswith("```"): text = text[3:]
+        if text.endswith("```"): text = text[:-3]
+        return json.loads(text.strip())
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
+
+st.markdown("---")
+st.subheader("🤖 AI覚醒者分析")
+st.caption("グルジェフ×ソロス×ダリオ - 覚醒した投資家の視点")
+
+if st.button("🔮 覚醒者の分析を実行", type="primary", use_container_width=True):
+    with st.spinner("🧘 覚醒者が市場を観照中..."):
+        ai_result = call_awakener_ai(phase_pct, age, moon_msg, vix_val, vix_change, gold_val, gold_change, gurdjieff_alarm, year_12_ago, year_36_ago, year_60_ago)
+
+    if ai_result:
+        awaken = ai_result.get("awakening_status", {})
+        level = awaken.get("consciousness_level", "")
+        level_emoji = {"覚醒": "🟢", "半覚醒": "🟡", "機械的": "🟠", "パニック": "🔴"}.get(level, "⚪")
+        st.metric("市場の意識レベル", f"{level_emoji} {level}")
+        st.info(f'🌌 **{awaken.get("headline", "")}**')
+        col_cr, col_ci = st.columns(2)
+        with col_cr:
+            st.markdown("**🤖 群衆の機械的反応:**")
+            st.markdown(awaken.get("crowd_behavior", ""))
+        with col_ci:
+            st.markdown("**👁️ 覚醒者の洞察:**")
+            st.markdown(awaken.get("contrarian_insight", ""))
+        st.markdown("---")
+
+        moon_a = ai_result.get("moon_analysis", {})
+        if moon_a:
+            st.markdown("### 🌙 月齢サイクル分析")
+            st.markdown(moon_a.get("current_phase_meaning", ""))
+            st.caption(f'📊 {moon_a.get("historical_pattern", "")}')
+            st.success(f'🎯 **行動指針:** {moon_a.get("action_guidance", "")}')
+        st.markdown("---")
+
+        fractal = ai_result.get("fractal_cycles", {})
+        if fractal:
+            st.markdown("### 🕰️ フラクタルサイクル AI分析")
+            col_f1, col_f2, col_f3 = st.columns(3)
+            y12 = fractal.get("year_12", {})
+            with col_f1:
+                st.markdown(f'<div style="background:#1a1a2e;padding:12px;border-radius:8px;border-left:3px solid #3498db;"><h4 style="color:#3498db;margin:0 0 8px 0;">🪐 12年前 ({year_12_ago})</h4><p style="color:#ddd;font-size:0.85em;">{y12.get("theme","")}</p><p style="color:#3498db;font-size:0.8em;">💡 {y12.get("lesson","")}</p></div>', unsafe_allow_html=True)
+            y36 = fractal.get("year_36", {})
+            with col_f2:
+                st.markdown(f'<div style="background:#1a1a2e;padding:12px;border-radius:8px;border-left:3px solid #f39c12;"><h4 style="color:#f39c12;margin:0 0 8px 0;">☠️ 36年前 ({year_36_ago})</h4><p style="color:#ddd;font-size:0.85em;">{y36.get("theme","")}</p><p style="color:#f39c12;font-size:0.8em;">💡 {y36.get("lesson","")}</p></div>', unsafe_allow_html=True)
+            y60 = fractal.get("year_60", {})
+            with col_f3:
+                st.markdown(f'<div style="background:#1a1a2e;padding:12px;border-radius:8px;border-left:3px solid #e74c3c;"><h4 style="color:#e74c3c;margin:0 0 8px 0;">🔄 60年前 ({year_60_ago})</h4><p style="color:#ddd;font-size:0.85em;">{y60.get("theme","")}</p><p style="color:#e74c3c;font-size:0.8em;">💡 {y60.get("lesson","")}</p></div>', unsafe_allow_html=True)
+            convergence = fractal.get("convergence", "")
+            if convergence:
+                st.warning(f"🔮 **3サイクルの収束:** {convergence}")
+        st.markdown("---")
+
+        fg = ai_result.get("fear_greed_diagnosis", {})
+        if fg:
+            st.markdown("### 😰 恐怖と貪欲の診断")
+            col_fg1, col_fg2 = st.columns(2)
+            with col_fg1:
+                st.markdown(f'**😰 VIX（機械的恐怖）:** {fg.get("vix_reading", "")}')
+            with col_fg2:
+                st.markdown(f'**🥇 Gold（本質的価値）:** {fg.get("gold_reading", "")}')
+            st.error(f'⚡ **機械的な罠:** {fg.get("mechanical_trap", "")}')
+        st.markdown("---")
+
+        st.markdown("### 🔮 フォワードシナリオ分析")
+        scenarios = ai_result.get("forward_scenarios", {})
+        base = scenarios.get("base_case", {})
+        st.markdown(f'<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);padding:20px;border-radius:10px;border-left:4px solid #8e44ad;margin-bottom:15px;"><h4 style="color:#8e44ad;margin-top:0;">🌌 メイン ({base.get("probability",50)}%): {base.get("title","")}</h4><p style="color:#ddd;">{base.get("narrative","")}</p><p style="color:#8e44ad;margin-bottom:0;">💼 {base.get("investment_action","")}</p></div>', unsafe_allow_html=True)
+        col_aw, col_md = st.columns(2)
+        awake_opp = scenarios.get("awakened_opportunity", {})
+        with col_aw:
+            st.markdown(f'<div style="background:#0a2a1a;padding:15px;border-radius:10px;border-left:4px solid #09AB3B;"><h4 style="color:#09AB3B;margin-top:0;">👁️ 覚醒者のチャンス ({awake_opp.get("probability",25)}%)</h4><p style="color:#2ecc71;font-weight:bold;">{awake_opp.get("title","")}</p><p style="color:#ddd;font-size:0.9em;">{awake_opp.get("narrative","")}</p><p style="color:#09AB3B;font-size:0.85em;">💼 {awake_opp.get("investment_action","")}</p></div>', unsafe_allow_html=True)
+        mech_danger = scenarios.get("mechanical_danger", {})
+        with col_md:
+            st.markdown(f'<div style="background:#2a0a0a;padding:15px;border-radius:10px;border-left:4px solid #FF4B4B;"><h4 style="color:#FF4B4B;margin-top:0;">🤖 機械的な危険 ({mech_danger.get("probability",25)}%)</h4><p style="color:#e74c3c;font-weight:bold;">{mech_danger.get("title","")}</p><p style="color:#ddd;font-size:0.9em;">{mech_danger.get("narrative","")}</p><p style="color:#FF4B4B;font-size:0.85em;">💼 {mech_danger.get("investment_action","")}</p></div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        practice = ai_result.get("self_remembering_practice", {})
+        if practice:
+            st.markdown("### 🧘 今日のSelf-Remembering")
+            st.markdown(f'<div style="background:linear-gradient(135deg,#0a0a2e,#1a1a3e);padding:20px;border-radius:10px;border:1px solid #8e44ad;"><p style="color:#bb8fce;font-style:italic;font-size:1.1em;">{practice.get("todays_meditation","")}</p><p style="color:#e74c3c;margin-top:10px;">🚫 <b>やってはいけないこと:</b> {practice.get("do_not","")}</p><p style="color:#2ecc71;">✅ <b>覚醒者として:</b> {practice.get("do_instead","")}</p></div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        rm = ai_result.get("risk_monitor", {})
+        st.markdown("### ⚠️ リスクモニター")
+        watch = rm.get("watch_items", [])
+        if watch:
+            for w in watch:
+                st.markdown(f"- 👁️ {w}")
+        inflection = rm.get("next_inflection", "")
+        if inflection:
+            st.error(f"🔄 **次の転換点:** {inflection}")
