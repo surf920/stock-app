@@ -155,3 +155,89 @@ else:
         if "TNX" in df.columns and "VIX" in df.columns:
             st.caption("金利(TNX)と恐怖指数(VIX)の推移")
             st.line_chart(pd.DataFrame({"US 10Y": df["TNX"], "VIX/10": df["VIX"]/10}))
+
+    # --- AIデリバティブ分析セクション ---
+    st.markdown("---")
+    st.subheader("🤖 AIデリバティブ・リスク分析")
+    st.caption("デリバティブ専門リスクマネージャー視点の分析")
+    
+    if st.button("🧠 AIで市場ストレスを分析", use_container_width=True):
+        with st.spinner("🔄 Claude AIがデリバティブ市場を分析中..."):
+            ai_result = call_dai_ai(dai, score_c, score_r, score_v, score_s, val_c, val_r, vix, skew)
+        
+        if ai_result:
+            cp = ai_result.get("cycle_position", {})
+            current = cp.get("current_stage", 1)
+            total = cp.get("total_stages", 5)
+            stage_name = cp.get("stage_name", "")
+            stages = cp.get("stages_map", [])
+            st.markdown("### 📍 ボラティリティサイクル 現在地")
+            cols_cycle = st.columns(total)
+            for i, stage in enumerate(stages):
+                with cols_cycle[i]:
+                    is_current = (i + 1 == current)
+                    if is_current:
+                        st.markdown(f"""<div style="background: linear-gradient(135deg, #3d0a5c, #6a1a8e); padding: 10px; border-radius: 8px; text-align: center; border: 2px solid #af7ac5;"><div style="font-size: 1.4em; font-weight: bold;">🦁</div><div style="font-size: 0.75em; font-weight: bold; color: #fff;">Stage {i+1}</div><div style="font-size: 0.65em; color: #ddd;">{stage.get('name', '')}</div></div>""", unsafe_allow_html=True)
+                    else:
+                        opacity = "0.4" if abs(i + 1 - current) > 1 else "0.7"
+                        st.markdown(f"""<div style="background: #262730; padding: 10px; border-radius: 8px; text-align: center; opacity: {opacity}; border: 1px solid #41444C;"><div style="font-size: 1.2em;">{"✅" if i + 1 < current else "⬜"}</div><div style="font-size: 0.7em; color: #888;">Stage {i+1}</div><div style="font-size: 0.6em; color: #888;">{stage.get('name', '')}</div></div>""", unsafe_allow_html=True)
+            st.progress(current / total, text=f"ボラサイクル: Stage {current}/{total} - {stage_name}")
+            evidence = cp.get("evidence", "")
+            if evidence:
+                st.info(f"📋 **判断根拠:** {evidence}")
+            st.markdown("---")
+            diag = ai_result.get("current_diagnosis", {})
+            st.markdown(f"### 🔍 現状診断: {diag.get('headline', '')}")
+            st.markdown(diag.get("summary", ""))
+            col_vix, col_skew2 = st.columns(2)
+            with col_vix:
+                st.markdown("**📉 VIX解釈:**")
+                st.markdown(diag.get("vix_interpretation", ""))
+            with col_skew2:
+                st.markdown("**🦢 SKEWシグナル:**")
+                st.markdown(diag.get("skew_signal", ""))
+            st.markdown("---")
+            comp = ai_result.get("component_analysis", {})
+            if comp:
+                st.markdown("### 📊 コンポーネント別分析")
+                cols_comp = st.columns(4)
+                comp_items = [("🏦 信用", "credit", "#3498db"), ("📈 金利", "rates", "#e74c3c"), ("📉 恐怖", "volatility", "#f39c12"), ("🦢 歪み", "skew", "#9b59b6")]
+                for cidx, (clabel, ckey, ccolor) in enumerate(comp_items):
+                    with cols_comp[cidx]:
+                        citem = comp.get(ckey, {})
+                        cstatus = citem.get("status", "正常")
+                        cemoji = {"正常": "🟢", "注意": "🟡", "警戒": "🟠", "危険": "🔴"}.get(cstatus, "⚪")
+                        st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-top: 3px solid {ccolor};"><h4 style="color: {ccolor}; margin: 0 0 5px 0;">{clabel}</h4><p style="margin: 0 0 5px 0;">{cemoji} <b>{cstatus}</b></p><p style="color: #ddd; font-size: 0.8em; margin: 0;">{citem.get('interpretation', '')}</p></div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            st.markdown("### 🔮 フォワードシナリオ分析")
+            scenarios = ai_result.get("forward_scenarios", {})
+            base = scenarios.get("base_case", {})
+            st.markdown(f"""<div style="background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border-left: 4px solid #af7ac5; margin-bottom: 15px;"><h4 style="color: #af7ac5; margin-top: 0;">🦁 メイン ({base.get('probability', 50)}%): {base.get('title', '')}</h4><p style="color: #F7C948;">📊 VIX予想: <b>{base.get('vix_range', '')}</b></p><table style="width: 100%;"><tr><td style="padding: 8px; color: #888;">3ヶ月後</td><td style="padding: 8px; color: #ddd;">→ {base.get('next_3months', '')}</td></tr><tr><td style="padding: 8px; color: #888;">6ヶ月後</td><td style="padding: 8px; color: #ddd;">→ {base.get('next_6months', '')}</td></tr></table><p style="color: #af7ac5; margin-bottom: 0;">💼 {base.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+            col_bull, col_bear = st.columns(2)
+            bull = scenarios.get("bull_case", {})
+            with col_bull:
+                st.markdown(f"""<div style="background: #0a2a1a; padding: 15px; border-radius: 10px; border-left: 4px solid #09AB3B;"><h4 style="color: #09AB3B; margin-top: 0;">🟢 低ボラ ({bull.get('probability', 25)}%): {bull.get('title', '')}</h4><p style="color: #ddd; font-size: 0.9em;">{bull.get('narrative', '')}</p><p style="color: #09AB3B; font-size: 0.85em;">💼 {bull.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+            bear = scenarios.get("bear_case", {})
+            with col_bear:
+                st.markdown(f"""<div style="background: #2a0a0a; padding: 15px; border-radius: 10px; border-left: 4px solid #FF4B4B;"><h4 style="color: #FF4B4B; margin-top: 0;">🔴 急騰 ({bear.get('probability', 25)}%): {bear.get('title', '')}</h4><p style="color: #ddd; font-size: 0.9em;">{bear.get('narrative', '')}</p><p style="color: #F7C948;">📈 VIX: <b>{bear.get('vix_target', '')}</b></p><p style="color: #FF4B4B; font-size: 0.85em;">💼 {bear.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            playbook = ai_result.get("options_playbook", {})
+            if playbook:
+                st.markdown("### 🎯 オプション・プレイブック")
+                col_o1, col_o2, col_o3 = st.columns(3)
+                with col_o1:
+                    st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #3498db;"><p style="color: #3498db; font-weight: bold; margin: 0 0 5px 0;">📊 現在の環境</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('current_regime', '')}</p></div>""", unsafe_allow_html=True)
+                with col_o2:
+                    st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #09AB3B;"><p style="color: #09AB3B; font-weight: bold; margin: 0 0 5px 0;">✅ 推奨戦略</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('recommended_structures', '')}</p></div>""", unsafe_allow_html=True)
+                with col_o3:
+                    st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #e74c3c;"><p style="color: #e74c3c; font-weight: bold; margin: 0 0 5px 0;">🚫 避けるべき</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('avoid', '')}</p></div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            rm = ai_result.get("risk_monitor", {})
+            st.markdown("### ⚠️ リスクモニター")
+            watch = rm.get("watch_items", [])
+            if watch:
+                for w in watch:
+                    st.markdown(f"- 👁️ {w}")
+            inflection = rm.get("next_inflection", "")
+            if inflection:
+                st.error(f"🔄 **次の転換点:** {inflection}")
