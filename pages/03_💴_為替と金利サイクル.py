@@ -145,7 +145,7 @@ def call_forex_ai(df):
         "anthropic-version": "2023-06-01"
     }
     payload = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-3-haiku-20240307",
         "max_tokens": 4096,
         "system": system_prompt,
         "messages": [{"role": "user", "content": data_text}]
