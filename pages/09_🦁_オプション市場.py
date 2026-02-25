@@ -12,6 +12,76 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
+import json
+import requests
+
+# --- AI要約機能 ---
+def call_dai_ai(dai, score_c, score_r, score_v, score_s, val_c, val_r, vix, skew):
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        st.error("ANTHROPIC_API_KEYが設定されていません")
+        return None
+    data_text = f"""## DAI データ
+- DAI総合: {dai:.1f}/100 ({"正常" if dai < 40 else "緊張" if dai < 60 else "警戒"})
+- Credit: {score_c:.1f}/100, LQD/HYG: {val_c:.4f}
+- Rate: {score_r:.1f}/100, 米10Y: {val_r:.2f}%
+- Volatility: {score_v:.1f}/100, VIX: {vix:.2f}
+- Skew: {score_s:.1f}/100, SKEW: {skew:.2f}"""
+    system_prompt = """あなたはシタデルで15年の経験を持つデリバティブ専門リスクマネージャーです。
+【重要】現在の日付は2026年2月です。全ての予測は2026年2月時点からの未来について述べてください。
+提供されたデータを分析し、以下のJSON形式で回答してください。具体的な数値を必ず引用してください。
+{
+    "cycle_position": {
+        "total_stages": 5, "current_stage": 2, "stage_name": "ステージ名",
+        "stages_map": [
+            {"stage": 1, "name": "低ボラ・安定期", "description": "VIX<15、信用スプレッド縮小"},
+            {"stage": 2, "name": "不安蓄積期", "description": "VIX低位だがSKEW上昇"},
+            {"stage": 3, "name": "ストレス顕在化", "description": "VIX20超、信用スプレッド拡大"},
+            {"stage": 4, "name": "パニック・危機", "description": "VIX40超、流動性枯渇"},
+            {"stage": 5, "name": "ボラ縮小・回復", "description": "VIXピークアウト、正常化"}
+        ],
+        "evidence": "判断根拠2-3文"
+    },
+    "current_diagnosis": {
+        "headline": "1行の見出し",
+        "summary": "現在の市場ストレス状態を4-5文で",
+        "vix_interpretation": "VIXの意味を2文で",
+        "skew_signal": "SKEWシグナルを2文で"
+    },
+    "component_analysis": {
+        "credit": {"status": "正常/注意/警戒/危険", "interpretation": "2文"},
+        "rates": {"status": "正常/注意/警戒/危険", "interpretation": "2文"},
+        "volatility": {"status": "正常/注意/警戒/危険", "interpretation": "2文"},
+        "skew": {"status": "正常/注意/警戒/危険", "interpretation": "2文"}
+    },
+    "forward_scenarios": {
+        "base_case": {"probability": 50, "title": "タイトル", "next_3months": "", "next_6months": "", "vix_range": "", "triggers": [], "investment_action": ""},
+        "bull_case": {"probability": 25, "title": "タイトル", "narrative": "", "triggers": [], "investment_action": ""},
+        "bear_case": {"probability": 25, "title": "タイトル", "narrative": "", "vix_target": "", "triggers": [], "investment_action": ""}
+    },
+    "options_playbook": {"current_regime": "", "recommended_structures": "", "avoid": ""},
+    "risk_monitor": {"watch_items": [], "next_inflection": ""}
+}"""
+    headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    try:
+        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)
+        response.raise_for_status()
+        result = response.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if text.startswith("```json"): text = text[7:]
+        if text.startswith("```"): text = text[3:]
+        if text.endswith("```"): text = text[:-3]
+        return json.loads(text.strip())
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
+
+
 # ページ設定
 st.set_page_config(page_title="DAI: 市場異常度指数", page_icon="🦁", layout="wide")
 st.title("🦁 DAI: Derivative Anomaly Index")
