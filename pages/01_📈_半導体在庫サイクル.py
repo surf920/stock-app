@@ -151,8 +151,40 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             timeout=90
         )
         if response.status_code != 200:
-            st.error(f"API HTTP {response.status_code}: {response.text[:300]}")
+            st.error(f"API HTTP {response.status_code}: リトライしてください")
             return None
+        result = response.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if not text:
+            st.error("AIからの応答が空です。再試行してください。")
+            return None
+        # JSON抽出（マークダウンフェンス除去 + 正規表現フォールバック）
+        clean = text
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        if clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            # 正規表現でJSON部分を抽出
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                return json.loads(json_match.group())
+            st.error("AI応答のJSON解析に失敗しました")
+            with st.expander("AI応答の内容"):
+                st.code(text[:1000])
+            return None
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
         result = response.json()
         text = ""
         for block in result.get("content", []):
