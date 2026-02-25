@@ -109,16 +109,3 @@ try:
     else:
         st.info("SaaSデータなし")
 
-    # --- AI Agent Verdict ---
-    st.divider()
-    st.subheader("🐇 Alice's Verdict")
-    if bizd_crack:
-        st.error("【警告】BDC指数が崩れています。信用収縮が始まっています。")
-    elif btc_down:
-        st.warning("【注意】先行指標（BTC）が弱含んでいます。警戒してください。")
-    else:
-        st.success("【正常】現在のところ、致命的なシグナルは点灯していません。")
-
-except Exception as e:
-    st.error("システムエラーが発生しました。")
-    st.write(e)
