@@ -3,6 +3,8 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import ssl
+import json
+import requests
 
 # --- 🚨 Avoid SSL Errors ---
 try:
@@ -16,6 +18,139 @@ else:
 # -----------------------------------------------------------------------------
 # Page Config
 # -----------------------------------------------------------------------------
+
+# --- AI要約機能 ---
+def call_btc_finance_ai(latest, latest_score, latest_raw_ratio, latest_ma200, latest_tnx, latest_tnx_ma20, latest_dxy, latest_dxy_ma20, macro_condition, status_title, df):
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        st.error("ANTHROPIC_API_KEYが設定されていません")
+        return None
+
+    score_pct = (latest_score - 1.0) * 100
+    tnx_trend = "低下中(BTC有利)" if latest_tnx < latest_tnx_ma20 else "上昇中(金融株有利)"
+    dxy_trend = "弱含み(BTC有利)" if latest_dxy < latest_dxy_ma20 else "強含み(金融株有利)"
+
+    data_text = f"""## BTC vs 金融株データ
+
+### Strength Score（トレンド乖離率）
+- 現在スコア: {latest_score:.2f} (トレンドから{score_pct:+.1f}%乖離)
+- 判定: {status_title}
+- BTC/XLFレシオ: {latest_raw_ratio:.2f}
+- 200日MA: {latest_ma200:.2f}
+
+### マクロ環境
+- 米10年債: {latest_tnx:.2f}% (20日MA: {latest_tnx_ma20:.2f}%) → {tnx_trend}
+- DXY: {latest_dxy:.2f} (20日MA: {latest_dxy_ma20:.2f}) → {dxy_trend}
+- マクロ環境: {"BTC有利（金利低下+ドル安）" if macro_condition else "金融株有利（金利上昇orドル高）"}
+
+### 過去レンジ (利用可能期間)
+- Strength Score: {df['Strength_Score'].min():.2f} - {df['Strength_Score'].max():.2f}
+- BTC/XLFレシオ: {df['Raw_Ratio'].min():.2f} - {df['Raw_Ratio'].max():.2f}
+
+### ゾーン定義
+- 緑ゾーン (>1.05): BTC圧倒的優位、Go Time
+- 黄ゾーン (0.95-1.05): 膠着、Wait
+- 赤ゾーン (<0.95): 金融株優位、Caution"""
+
+    system_prompt = """あなたはARKインベストとギャラクシーデジタルで15年の経験を持つデジタル資産vs伝統金融の専門ストラテジストです。
+BTCと金融セクター(XLF)の相対強弱から、マクロ環境と資金フローの方向を読み解きます。
+
+【重要】現在の日付は2026年2月です。全ての予測は2026年2月時点からの未来について述べてください。
+
+提供されたデータを分析し、以下のJSON形式で回答してください。
+
+【分析ルール】
+1. 必ず具体的な数値を引用（Strength Score、レシオ、金利、DXY）
+2. BTC vs 金融株の相対強弱がマクロ環境の「リトマス試験紙」
+3. 金利とドルの方向がBTC/XLFレシオの最大ドライバー
+4. データにない事実を捏造しない
+
+{
+    "cycle_position": {
+        "total_stages": 4,
+        "current_stage": 2,
+        "stage_name": "ステージ名",
+        "stages_map": [
+            {"stage": 1, "name": "BTC劣勢・金融株優位", "description": "金利上昇、ドル高、資金は伝統金融へ"},
+            {"stage": 2, "name": "均衡・方向感模索", "description": "トレンド付近で膠着、次の触媒待ち"},
+            {"stage": 3, "name": "BTC優勢・リスクオン", "description": "金利低下、ドル安、リスク資産選好"},
+            {"stage": 4, "name": "BTC過熱・反転警戒", "description": "乖離拡大、利確圧力、マクロ変化注意"}
+        ],
+        "evidence": "判断根拠を2-3文で。具体数値必須"
+    },
+    "current_diagnosis": {
+        "headline": "1行の見出し",
+        "summary": "BTC vs 金融株の現在の力関係を4-5文で。Strength Score、金利、DXYを引用",
+        "macro_alignment": "マクロ環境（金利・ドル）がどちらに有利か。2文で",
+        "flow_direction": "資金フローの方向（デジタル資産→伝統金融、またはその逆）。2文で"
+    },
+    "asset_comparison": {
+        "btc": {
+            "outlook": "BTCの見通しを2文で",
+            "key_driver": "主なドライバー",
+            "signal": "強気/中立/弱気"
+        },
+        "xlf": {
+            "outlook": "金融株の見通しを2文で",
+            "key_driver": "主なドライバー",
+            "signal": "強気/中立/弱気"
+        }
+    },
+    "forward_scenarios": {
+        "base_case": {
+            "probability": 50,
+            "title": "メインシナリオ",
+            "next_3months": "今後3ヶ月の展開",
+            "score_direction": "Strength Scoreの方向（上昇/横ばい/低下）",
+            "triggers": [],
+            "investment_action": "BTC vs 金融株の配分"
+        },
+        "btc_bull": {
+            "probability": 25,
+            "title": "BTC優勢シナリオ",
+            "narrative": "3-4文",
+            "triggers": [],
+            "investment_action": ""
+        },
+        "xlf_bull": {
+            "probability": 25,
+            "title": "金融株優勢シナリオ",
+            "narrative": "3-4文",
+            "triggers": [],
+            "investment_action": ""
+        }
+    },
+    "tactical_playbook": {
+        "current_allocation": "現在のスコアに基づく推奨配分（例: BTC60%/金融株40%）",
+        "entry_signal": "次のエントリーシグナル",
+        "stop_signal": "撤退すべきシグナル"
+    },
+    "risk_monitor": {
+        "watch_items": ["監視項目1", "2", "3"],
+        "next_inflection": "次の転換点"
+    }
+}"""
+
+    headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    try:
+        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)
+        response.raise_for_status()
+        result = response.json()
+        text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text += block["text"]
+        text = text.strip()
+        if text.startswith("```json"): text = text[7:]
+        if text.startswith("```"): text = text[3:]
+        if text.endswith("```"): text = text[:-3]
+        return json.loads(text.strip())
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
+
+
 st.set_page_config(
     page_title="BTC vs Financials",
     page_icon="⚖️",
@@ -238,3 +373,101 @@ with st.expander("💡 なぜこの指標を見るのか？（電車とジェッ
     *   **BTC/XLFレシオ**: ビットコイン（リスク）と金融株（実需・金利）のどちらが選好されているか?
     *   **トレンド乖離**: 単純な数値（0.6など）は時代の変化でズレますが、「トレンドとの距離」は常に一定の物差し（過熱感・売られすぎ）として機能します。
     """)
+
+
+# --- AI BTC vs 金融株分析セクション ---
+st.markdown("---")
+st.subheader("🤖 AI BTC vs 金融株 分析")
+st.caption("デジタル資産 vs 伝統金融 専門ストラテジスト視点の分析")
+
+if st.button("🧠 AIでBTC vs 金融株を分析", use_container_width=True):
+    with st.spinner("🔄 Claude AIが分析中..."):
+        ai_result = call_btc_finance_ai(latest, latest_score, latest_raw_ratio, latest_ma200, latest_tnx, latest_tnx_ma20, latest_dxy, latest_dxy_ma20, macro_condition, status_title, df)
+    
+    if ai_result:
+        cp = ai_result.get("cycle_position", {})
+        current = cp.get("current_stage", 1)
+        total = cp.get("total_stages", 4)
+        stage_name = cp.get("stage_name", "")
+        stages = cp.get("stages_map", [])
+        
+        st.markdown("### 📍 BTC vs 金融株サイクル 現在地")
+        cols_cycle = st.columns(total)
+        for i, stage in enumerate(stages):
+            with cols_cycle[i]:
+                is_current = (i + 1 == current)
+                if is_current:
+                    st.markdown(f"""<div style="background: linear-gradient(135deg, #1a3a5c, #2471a3); padding: 10px; border-radius: 8px; text-align: center; border: 2px solid #5dade2;"><div style="font-size: 1.4em; font-weight: bold;">⚖️</div><div style="font-size: 0.75em; font-weight: bold; color: #fff;">Stage {i+1}</div><div style="font-size: 0.65em; color: #ddd;">{stage.get('name', '')}</div></div>""", unsafe_allow_html=True)
+                else:
+                    opacity = "0.4" if abs(i + 1 - current) > 1 else "0.7"
+                    st.markdown(f"""<div style="background: #262730; padding: 10px; border-radius: 8px; text-align: center; opacity: {opacity}; border: 1px solid #41444C;"><div style="font-size: 1.2em;">{"✅" if i + 1 < current else "⬜"}</div><div style="font-size: 0.7em; color: #888;">Stage {i+1}</div><div style="font-size: 0.6em; color: #888;">{stage.get('name', '')}</div></div>""", unsafe_allow_html=True)
+        st.progress(current / total, text=f"サイクル: Stage {current}/{total} - {stage_name}")
+        evidence = cp.get("evidence", "")
+        if evidence:
+            st.info(f"📋 **判断根拠:** {evidence}")
+        st.markdown("---")
+        
+        diag = ai_result.get("current_diagnosis", {})
+        st.markdown(f"### 🔍 現状診断: {diag.get('headline', '')}")
+        st.markdown(diag.get("summary", ""))
+        col_ma, col_fl = st.columns(2)
+        with col_ma:
+            st.markdown("**🌍 マクロ環境:**")
+            st.markdown(diag.get("macro_alignment", ""))
+        with col_fl:
+            st.markdown("**💰 資金フロー:**")
+            st.markdown(diag.get("flow_direction", ""))
+        st.markdown("---")
+        
+        comp = ai_result.get("asset_comparison", {})
+        if comp:
+            st.markdown("### ⚖️ 資産比較")
+            col_btc, col_xlf = st.columns(2)
+            btc_item = comp.get("btc", {})
+            xlf_item = comp.get("xlf", {})
+            btc_signal = btc_item.get("signal", "中立")
+            xlf_signal = xlf_item.get("signal", "中立")
+            signal_emoji = {"強気": "🟢", "中立": "🟡", "弱気": "🔴"}.get
+            with col_btc:
+                be = {"強気": "🟢", "中立": "🟡", "弱気": "🔴"}.get(btc_signal, "⚪")
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 15px; border-radius: 8px; border-top: 3px solid #F7931A;"><h4 style="color: #F7931A; margin: 0 0 8px 0;">₿ Bitcoin</h4><p style="color: #ddd; font-size: 0.85em;">{btc_item.get('outlook', '')}</p><p style="color: #888; font-size: 0.8em;">📌 {btc_item.get('key_driver', '')}</p><p style="margin: 0;">{be} <b>{btc_signal}</b></p></div>""", unsafe_allow_html=True)
+            with col_xlf:
+                xe = {"強気": "🟢", "中立": "🟡", "弱気": "🔴"}.get(xlf_signal, "⚪")
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 15px; border-radius: 8px; border-top: 3px solid #3498db;"><h4 style="color: #3498db; margin: 0 0 8px 0;">🏦 XLF (金融株)</h4><p style="color: #ddd; font-size: 0.85em;">{xlf_item.get('outlook', '')}</p><p style="color: #888; font-size: 0.8em;">📌 {xlf_item.get('key_driver', '')}</p><p style="margin: 0;">{xe} <b>{xlf_signal}</b></p></div>""", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        st.markdown("### 🔮 フォワードシナリオ分析")
+        scenarios = ai_result.get("forward_scenarios", {})
+        base = scenarios.get("base_case", {})
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border-left: 4px solid #5dade2; margin-bottom: 15px;"><h4 style="color: #5dade2; margin-top: 0;">⚖️ メイン ({base.get('probability', 50)}%): {base.get('title', '')}</h4><p style="color: #F7C948;">📊 Score方向: <b>{base.get('score_direction', '')}</b></p><p style="color: #ddd;">{base.get('next_3months', '')}</p><p style="color: #5dade2; margin-bottom: 0;">💼 {base.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+        
+        col_bull, col_bear = st.columns(2)
+        btc_bull = scenarios.get("btc_bull", {})
+        with col_bull:
+            st.markdown(f"""<div style="background: #1a1a0a; padding: 15px; border-radius: 10px; border-left: 4px solid #F7931A;"><h4 style="color: #F7931A; margin-top: 0;">₿ BTC優勢 ({btc_bull.get('probability', 25)}%): {btc_bull.get('title', '')}</h4><p style="color: #ddd; font-size: 0.9em;">{btc_bull.get('narrative', '')}</p><p style="color: #F7931A; font-size: 0.85em;">💼 {btc_bull.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+        xlf_bull = scenarios.get("xlf_bull", {})
+        with col_bear:
+            st.markdown(f"""<div style="background: #0a1a2a; padding: 15px; border-radius: 10px; border-left: 4px solid #3498db;"><h4 style="color: #3498db; margin-top: 0;">🏦 金融株優勢 ({xlf_bull.get('probability', 25)}%): {xlf_bull.get('title', '')}</h4><p style="color: #ddd; font-size: 0.9em;">{xlf_bull.get('narrative', '')}</p><p style="color: #3498db; font-size: 0.85em;">💼 {xlf_bull.get('investment_action', '')}</p></div>""", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        playbook = ai_result.get("tactical_playbook", {})
+        if playbook:
+            st.markdown("### 🎯 タクティカル・プレイブック")
+            col_t1, col_t2, col_t3 = st.columns(3)
+            with col_t1:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #2ecc71;"><p style="color: #2ecc71; font-weight: bold; margin: 0 0 5px 0;">📊 推奨配分</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('current_allocation', '')}</p></div>""", unsafe_allow_html=True)
+            with col_t2:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #3498db;"><p style="color: #3498db; font-weight: bold; margin: 0 0 5px 0;">🚀 エントリーシグナル</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('entry_signal', '')}</p></div>""", unsafe_allow_html=True)
+            with col_t3:
+                st.markdown(f"""<div style="background: #1a1a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #e74c3c;"><p style="color: #e74c3c; font-weight: bold; margin: 0 0 5px 0;">🛑 撤退シグナル</p><p style="color: #ddd; font-size: 0.85em; margin: 0;">{playbook.get('stop_signal', '')}</p></div>""", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        rm = ai_result.get("risk_monitor", {})
+        st.markdown("### ⚠️ リスクモニター")
+        watch = rm.get("watch_items", [])
+        if watch:
+            for w in watch:
+                st.markdown(f"- 👁️ {w}")
+        inflection = rm.get("next_inflection", "")
+        if inflection:
+            st.error(f"🔄 **次の転換点:** {inflection}")
