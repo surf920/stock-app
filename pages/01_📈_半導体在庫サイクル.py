@@ -150,7 +150,9 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             json=payload,
             timeout=90
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            st.error(f"API HTTP {response.status_code}: {response.text[:300]}")
+            return None
         result = response.json()
         text = ""
         for block in result.get("content", []):
