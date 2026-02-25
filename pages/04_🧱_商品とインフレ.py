@@ -164,7 +164,7 @@ def call_commodity_ai(df_current, df_hist):
         "anthropic-version": "2023-06-01"
     }
     payload = {
-        "model": "claude-3-haiku-20240307",
+        "model": "claude-3-5-sonnet-20241022",
         "max_tokens": 4096,
         "system": system_prompt,
         "messages": [{"role": "user", "content": data_text}]

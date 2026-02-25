@@ -159,7 +159,7 @@ def call_polymarket_ai(all_markets, categories):
 }"""
 
     headers = {"x-api-key": api_key, "content-type": "application/json", "anthropic-version": "2023-06-01"}
-    payload = {"model": "claude-3-haiku-20240307", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
+    payload = {"model": "claude-3-5-sonnet-20241022", "max_tokens": 4096, "system": system_prompt, "messages": [{"role": "user", "content": data_text}]}
 
     try:
         response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=90)

@@ -138,7 +138,7 @@ def call_claude_api(market_data_text):
     }
 
     payload = {
-        "model": "claude-3-haiku-20240307",
+        "model": "claude-3-5-sonnet-20241022",
         "max_tokens": 4096,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}]
