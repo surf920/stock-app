@@ -4,6 +4,7 @@ import yfinance as yf
 import plotly.express as px
 import ssl
 import json
+import re
 import requests
 
 # --- 🚨 通信エラー回避 ---
