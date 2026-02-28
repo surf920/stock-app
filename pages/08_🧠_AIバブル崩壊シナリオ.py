@@ -22,8 +22,123 @@ st.title("🧠 ソロスのAIバブル崩壊モデル (Boom/Bust)")
 st.markdown("伝説の投資家ジョージ・ソロスの「再帰性理論」に基づき、**市場の歪み（バブル度）**を計測します。")
 
 
+# --- 5シグナルデータ収集 ---
+@st.cache_data(ttl=3600)
+def get_five_signals():
+    """5つのマーケットシグナルを収集"""
+    signals = {}
+
+    # ① 半導体在庫サイクル (DOI)
+    semi_doi = {}
+    for name, ticker in {"NVIDIA": "NVDA", "Micron": "MU", "TSMC": "TSM"}.items():
+        try:
+            tk = yf.Ticker(ticker)
+            bs = tk.quarterly_balance_sheet
+            fins = tk.quarterly_financials
+            if bs is not None and not bs.empty and fins is not None and not fins.empty:
+                inv = bs.loc["Inventory"].iloc[0] if "Inventory" in bs.index else None
+                cogs = fins.loc["Cost Of Revenue"].iloc[0] if "Cost Of Revenue" in fins.index else None
+                if inv and cogs and cogs > 0:
+                    semi_doi[name] = round(float(inv) / (float(cogs) / 90), 1)
+                else:
+                    semi_doi[name] = None
+            else:
+                semi_doi[name] = None
+        except:
+            semi_doi[name] = None
+    signals["semiconductor_doi"] = semi_doi
+
+    # ② ハイパースケーラーCAPEX
+    capex_data = {}
+    for name, ticker in {"MSFT": "MSFT", "AMZN": "AMZN", "GOOGL": "GOOGL", "META": "META"}.items():
+        try:
+            tk = yf.Ticker(ticker)
+            hist = tk.history(period="6mo")
+            if not hist.empty:
+                current = hist['Close'].iloc[-1]
+                past = hist['Close'].iloc[0]
+                chg = ((current - past) / past) * 100
+                capex_data[name] = {"price": round(float(current), 2), "change_6m": round(float(chg), 1)}
+            cf = tk.quarterly_cashflow
+            if cf is not None and not cf.empty:
+                capex_key = None
+                for key in cf.index:
+                    if "Capital Expenditure" in str(key):
+                        capex_key = key
+                        break
+                if capex_key:
+                    recent = abs(float(cf.loc[capex_key].iloc[0])) / 1e9
+                    prev = abs(float(cf.loc[capex_key].iloc[1])) / 1e9 if len(cf.columns) > 1 else None
+                    capex_data[name]["capex_B"] = round(recent, 1)
+                    if prev and prev > 0:
+                        capex_data[name]["capex_growth"] = round(((recent - prev) / prev) * 100, 1)
+        except:
+            pass
+    signals["hyperscaler_capex"] = capex_data
+
+    # ③ 金利・流動性
+    rate_data = {}
+    try:
+        tnx = yf.Ticker("^TNX")
+        h = tnx.history(period="3mo")
+        if not h.empty:
+            rate_data["us10y"] = round(float(h['Close'].iloc[-1]), 2)
+            rate_data["us10y_3m_ago"] = round(float(h['Close'].iloc[0]), 2)
+    except:
+        pass
+    try:
+        hyg = yf.Ticker("HYG").history(period="3mo")
+        tlt = yf.Ticker("TLT").history(period="3mo")
+        if not hyg.empty and not tlt.empty:
+            hyg_chg = ((hyg['Close'].iloc[-1] - hyg['Close'].iloc[0]) / hyg['Close'].iloc[0]) * 100
+            tlt_chg = ((tlt['Close'].iloc[-1] - tlt['Close'].iloc[0]) / tlt['Close'].iloc[0]) * 100
+            rate_data["hyg_3m_pct"] = round(float(hyg_chg), 1)
+            rate_data["tlt_3m_pct"] = round(float(tlt_chg), 1)
+            rate_data["credit_stress"] = "拡大" if hyg_chg < tlt_chg - 2 else "縮小" if hyg_chg > tlt_chg + 2 else "安定"
+    except:
+        pass
+    signals["rates_liquidity"] = rate_data
+
+    # ④ セクターローテーション
+    sector_data = {}
+    for name, ticker in {"XLK": "XLK", "XLI": "XLI", "XLE": "XLE", "XLB": "XLB", "XLU": "XLU"}.items():
+        try:
+            h = yf.Ticker(ticker).history(period="3mo")
+            if not h.empty:
+                chg = ((h['Close'].iloc[-1] - h['Close'].iloc[0]) / h['Close'].iloc[0]) * 100
+                sector_data[name] = round(float(chg), 1)
+        except:
+            pass
+    if "XLK" in sector_data:
+        cyclical_avg = sum(sector_data.get(s, 0) for s in ["XLI", "XLE", "XLB"]) / 3
+        sector_data["tech_vs_cyclical"] = round(sector_data["XLK"] - cyclical_avg, 1)
+        sector_data["rotation_signal"] = "テック優位" if sector_data["tech_vs_cyclical"] > 3 else "景気循環優位（Late Cycle）" if sector_data["tech_vs_cyclical"] < -3 else "中立"
+    signals["sector_rotation"] = sector_data
+
+    # ⑤ 実体経済温度計
+    real_economy = {}
+    try:
+        bdry = yf.Ticker("BDRY")
+        h = bdry.history(period="3mo")
+        if not h.empty:
+            real_economy["bdry_current"] = round(float(h['Close'].iloc[-1]), 2)
+            real_economy["bdry_3m_chg"] = round(((h['Close'].iloc[-1] - h['Close'].iloc[0]) / h['Close'].iloc[0]) * 100, 1)
+    except:
+        pass
+    try:
+        copper = yf.Ticker("HG=F")
+        h = copper.history(period="3mo")
+        if not h.empty:
+            real_economy["copper_3m_chg"] = round(((h['Close'].iloc[-1] - h['Close'].iloc[0]) / h['Close'].iloc[0]) * 100, 1)
+    except:
+        pass
+    signals["real_economy"] = real_economy
+
+    return signals
+
+
 # --- AI要約機能 ---
-def call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r):
+def call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r, signals=None):
     """AIバブル崩壊シナリオをClaude APIで分析"""
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -50,22 +165,94 @@ def call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r):
 - 仮想通貨バブル(2017): BTC 20倍上昇 → 崩壊後85%下落
 - NVIDIA現在: PSR={psr:.1f}倍"""
 
-    system_prompt = """あなたはジョージ・ソロスのクォンタムファンドで15年、その後レイ・ダリオのブリッジウォーターで10年の経験を持つバブル分析の世界的権威です。
-ソロスの再帰性理論とダリオのデットサイクル理論を組み合わせてAIバブルを分析します。
+    # 5シグナルデータを追加
+    if signals:
+        data_text += "\n\n## 5シグナル統合データ"
+
+        data_text += "\n\n### ① 半導体在庫サイクル (DOI)\n"
+        for name, doi in signals.get("semiconductor_doi", {}).items():
+            data_text += f"- {name}: DOI={doi}日\n" if doi else f"- {name}: データ不足\n"
+
+        data_text += "\n### ② ハイパースケーラーCAPEX\n"
+        for name, d in signals.get("hyperscaler_capex", {}).items():
+            capex_str = f"CAPEX={d.get('capex_B', 'N/A')}B$" if 'capex_B' in d else ""
+            growth_str = f"(QoQ {d.get('capex_growth', 'N/A')}%)" if 'capex_growth' in d else ""
+            data_text += f"- {name}: 株価${d.get('price', 0):.0f} (6M: {d.get('change_6m', 0):+.1f}%) {capex_str} {growth_str}\n"
+
+        rd = signals.get("rates_liquidity", {})
+        data_text += f"""\n### ③ 金利・流動性
+- 米10年金利: {rd.get('us10y', 'N/A')}% (3M前: {rd.get('us10y_3m_ago', 'N/A')}%)
+- HYG(ハイイールド) 3M変化: {rd.get('hyg_3m_pct', 'N/A')}%
+- TLT(長期国債) 3M変化: {rd.get('tlt_3m_pct', 'N/A')}%
+- クレジットストレス: {rd.get('credit_stress', 'N/A')}
+"""
+
+        sd = signals.get("sector_rotation", {})
+        data_text += f"""\n### ④ セクターローテーション (3M変化)
+- XLK(テック): {sd.get('XLK', 'N/A')}%
+- XLI(資本財): {sd.get('XLI', 'N/A')}%
+- XLE(エネルギー): {sd.get('XLE', 'N/A')}%
+- XLB(素材): {sd.get('XLB', 'N/A')}%
+- XLU(公益): {sd.get('XLU', 'N/A')}%
+- テック vs 景気循環: {sd.get('tech_vs_cyclical', 'N/A')}pt → {sd.get('rotation_signal', 'N/A')}
+"""
+
+        re_data = signals.get("real_economy", {})
+        data_text += f"""\n### ⑤ 実体経済温度計
+- BDRY(海運指数): {re_data.get('bdry_current', 'N/A')} (3M: {re_data.get('bdry_3m_chg', 'N/A')}%)
+- 銅先物 3M変化: {re_data.get('copper_3m_chg', 'N/A')}%
+"""
+
+    system_prompt = """あなたはグローバルマクロヘッジファンドのリスクマネージャーであり、ジョージ・ソロスのクォンタムファンドで15年、レイ・ダリオのブリッジウォーターで10年の経験を持つバブル分析の世界的権威です。
+ソロスの再帰性理論とダリオのデットサイクル理論を組み合わせ、さらに「ストーリー評価」ではなく"市場シグナルベース"でAIバブルの現在の危険度を判定してください。
 
 【重要】現在の日付は2026年2月です。全ての予測・見通しは2026年2月時点からの未来について述べてください。
 
-提供されたデータを分析し、以下のJSON形式で回答してください。
-ファンドのリスク委員会に提出する警告レポートのように、具体的な数値と歴史的比較を明確にしてください。
-
 【分析ルール】
-1. 必ず具体的な数値を引用（NVIDIA株価、PSR、金利、バブルスコア）
+1. 必ず具体的な数値を引用（NVIDIA株価、PSR、金利、バブルスコア、各シグナル数値）
 2. 過去のバブル（ドットコム、仮想通貨、日本バブル等）との定量的比較
 3. ソロスの再帰性理論の枠組みで分析（自己強化→転換点→自己崩壊）
 4. 感情的にならず、確率論的に冷静に分析
 5. データにない事実を捏造しない
+6. ニュース解説は禁止。市場データの因果関係のみで判断
+
+【5シグナル統合評価（必須）】次の5つを統合評価してください：
+① 半導体在庫サイクル: NVIDIA DOI / Micron DOI / TSMC DOI → 在庫増加転換が起きているか
+② ハイパースケーラーCAPEXモメンタム: MSFT/AMZN/GOOGL/META のCAPEX成長率 → 増加率が鈍化していないか
+③ 金利・流動性条件: 米10年金利 / HY Credit Spread → 資金調達コスト悪化の兆候
+④ セクターローテーション: XLI/XLE/XLB vs XLK 相対強弱 → Late Cycle拡張か Risk-Off転換か
+⑤ 実体経済温度計: 海運指数（BDRY）/ 銅先物 → 設備投資の減速兆候
+
+【シグナルステージ判定】5シグナルを統合し、以下の4段階で現在地を判定：
+🟢 Stage1：AI拡張初期（安全） - DOI安定、CAPEX加速、金利安定、テック優位
+🟡 Stage2：過熱拡大（注意） - DOI上昇兆候、CAPEX鈍化開始、金利上昇圧力
+🟠 Stage3：期待ピーク（警戒） - DOI120日超、CAPEX成長鈍化明確、クレジット悪化
+🔴 Stage4：崩壊前夜（リスクオフ） - DOI急上昇、CAPEX削減、セクターローテーション反転
+
+提供されたデータを分析し、以下のJSON形式で回答してください。
 
 {
+    "signal_stage": {
+        "current_stage": 2,
+        "stage_label": "🟡 Stage2：過熱拡大（注意）",
+        "evidence": "5シグナルに基づく判定根拠を3-4文で。各シグナルの具体的数値を引用"
+    },
+    "signal_scores": {
+        "semiconductor_doi": {"score": "🟢or🟡or🟠or🔴", "detail": "具体数値とトレンドを1文で"},
+        "hyperscaler_capex": {"score": "🟢or🟡or🟠or🔴", "detail": "具体数値とトレンドを1文で"},
+        "rates_liquidity": {"score": "🟢or🟡or🟠or🔴", "detail": "具体数値とトレンドを1文で"},
+        "sector_rotation": {"score": "🟢or🟡or🟠or🔴", "detail": "具体数値とトレンドを1文で"},
+        "real_economy": {"score": "🟢or🟡or🟠or🔴", "detail": "具体数値とトレンドを1文で"}
+    },
+    "risk_direction_3m": {
+        "direction": "↑or→or↓",
+        "label": "リスク上昇中/横ばい/リスク低下中",
+        "reasoning": "3ヶ月以内のリスク方向を2文で説明"
+    },
+    "most_vulnerable_sector": {
+        "sector": "最初に崩れる可能性が高いセクター",
+        "reason": "なぜそのセクターが最も脆弱か。2文で"
+    },
     "cycle_position": {
         "total_stages": 6,
         "current_stage": 3,
@@ -126,7 +313,11 @@ def call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r):
     },
     "risk_monitor": {
         "watch_items": ["監視すべき指標やイベント1", "2", "3"],
-        "next_inflection": "次の転換点はいつ・何がきっかけか"
+        "next_inflection": "次の転換点はいつ・何がきっかけか",
+        "actionable_triggers": [
+            {"trigger": "具体的な数値条件", "action": "その時取るべきアクション"},
+            {"trigger": "条件2", "action": "アクション2"}
+        ]
     }
 }"""
 
@@ -283,14 +474,60 @@ st.info("""
 # --- AIバブル分析セクション ---
 st.markdown("---")
 st.subheader("🤖 AIバブル崩壊リスク分析")
-st.caption("ソロス×ダリオ流バブル分析の世界的権威による診断")
+st.caption("ソロス×ダリオ流 + 5シグナル統合分析による市場シグナルベース診断")
 
 if st.button("🧠 AIでバブル崩壊リスクを分析", use_container_width=True):
+    # 5シグナルデータ収集
+    with st.spinner("📡 5つのマーケットシグナルを収集中..."):
+        signals = get_five_signals()
+
     with st.spinner("🔄 Claude AIがバブルリスクを分析中..."):
-        ai_result = call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r)
+        ai_result = call_bubble_ai(price, psr, rate, bubble_score, e, l, t, r, signals=signals)
     
     if ai_result:
-        # --- サイクルポジション ---
+        # --- 5シグナル統合ステージ判定 ---
+        ss = ai_result.get("signal_stage", {})
+        if ss:
+            st.markdown(f"### 🎯 {ss.get('stage_label', '')}")
+            ss_evidence = ss.get("evidence", "")
+            if ss_evidence:
+                st.info(f"📡 **シグナル判定:** {ss_evidence}")
+
+        # --- 個別シグナルスコア ---
+        scores = ai_result.get("signal_scores", {})
+        if scores:
+            signal_labels = {
+                "semiconductor_doi": "① 半導体DOI",
+                "hyperscaler_capex": "② CAPEX",
+                "rates_liquidity": "③ 金利・流動性",
+                "sector_rotation": "④ セクター回転",
+                "real_economy": "⑤ 実体経済"
+            }
+            score_cols = st.columns(5)
+            for idx, (key, label) in enumerate(signal_labels.items()):
+                with score_cols[idx]:
+                    s = scores.get(key, {})
+                    st.metric(label, s.get("score", "⚪"))
+                    st.caption(s.get("detail", ""))
+
+        # --- リスク方向 & 最脆弱セクター ---
+        rd3 = ai_result.get("risk_direction_3m", {})
+        mvs = ai_result.get("most_vulnerable_sector", {})
+        if rd3 or mvs:
+            col_rd, col_mv = st.columns(2)
+            with col_rd:
+                if rd3:
+                    direction = rd3.get("direction", "→")
+                    st.metric("3ヶ月リスク方向", f"{direction} {rd3.get('label', '')}")
+                    st.caption(rd3.get("reasoning", ""))
+            with col_mv:
+                if mvs:
+                    st.metric("🎯 最脆弱セクター", mvs.get("sector", ""))
+                    st.caption(mvs.get("reason", ""))
+
+        st.markdown("---")
+
+        # --- サイクルポジション（既存デザイン） ---
         cp = ai_result.get("cycle_position", {})
         current = cp.get("current_stage", 1)
         total = cp.get("total_stages", 6)
@@ -444,6 +681,14 @@ if st.button("🧠 AIでバブル崩壊リスクを分析", use_container_width=
         if watch:
             for w in watch:
                 st.markdown(f"- 👁️ {w}")
+
+        # アクショントリガー
+        triggers = rm.get("actionable_triggers", [])
+        if triggers:
+            st.markdown("**🔔 アクショントリガー:**")
+            for trig in triggers:
+                st.warning(f"**IF:** {trig.get('trigger', '')} → **THEN:** {trig.get('action', '')}")
+
         inflection = rm.get("next_inflection", "")
         if inflection:
             st.error(f"🔄 **次の転換点:** {inflection}")
