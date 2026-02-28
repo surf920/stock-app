@@ -45,7 +45,9 @@ def call_semiconductor_ai(df_current, df_doi_hist):
             vals = [f"{r['Date'].strftime('%Y-%m')}: {r['DOI']:.1f}日" for _, r in hist.iterrows()]
             data_text += f"- {company}: {' -> '.join(vals)}\n"
 
-    system_prompt = """あなたはブリッジウォーターやルネサンステクノロジーズで20年の経験を持つ半導体セクター専門のシニアポートフォリオマネージャーです。
+    system_prompt = """今日は2026年2月28日です。
+
+あなたはブリッジウォーターやルネサンステクノロジーズで20年の経験を持つ半導体セクター専門のシニアポートフォリオマネージャーです。
 
 重要: 応答は必ずJSON形式のみで返してください。説明文やマークダウンは一切不要です。JSONオブジェクトだけを返してください。
 
