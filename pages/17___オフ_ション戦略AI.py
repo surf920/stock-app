@@ -343,11 +343,21 @@ if uploaded_file:
                                 st.markdown(leg_html, unsafe_allow_html=True)
 
                             # P&L Profile
-                            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-                            col_p1.metric("最大利益", s.get("max_profit", "-"))
-                            col_p2.metric("最大損失", s.get("max_loss", "-"))
-                            col_p3.metric("損益分岐", s.get("breakeven", "-"))
-                            col_p4.metric("勝率目安", s.get("probability_of_profit", "-"))
+                            metrics = [
+                                ("最大利益", s.get("max_profit", "-"), "#2ecc71"),
+                                ("最大損失", s.get("max_loss", "-"), "#e74c3c"),
+                                ("損益分岐", s.get("breakeven", "-"), "#f39c12"),
+                                ("勝率目安", s.get("probability_of_profit", "-"), "#3498db"),
+                            ]
+                            metric_html = '<div style="display:flex;gap:10px;margin:10px 0;">'
+                            for label, value, color in metrics:
+                                metric_html += f'''
+                                <div style="flex:1;background:#1a1a2e;border-radius:8px;padding:12px 10px;border-top:3px solid {color};min-width:0;">
+                                    <div style="color:#888;font-size:0.75em;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{label}</div>
+                                    <div style="color:{color};font-size:0.95em;font-weight:bold;word-break:break-all;line-height:1.3;">{value}</div>
+                                </div>'''
+                            metric_html += '</div>'
+                            st.markdown(metric_html, unsafe_allow_html=True)
                             st.markdown("---")
 
                     # Hedging Plan
