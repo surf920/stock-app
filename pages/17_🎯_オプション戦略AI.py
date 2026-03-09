@@ -53,57 +53,66 @@ if uploaded_file:
     try:
         raw_lines = uploaded_file.getvalue().decode("utf-8").splitlines()
 
-        # IB CSV parsing - find the portfolio section
-        data_rows = []
-        header = None
-        in_portfolio = False
+        # IB Flex CSV: find the row with "Symbol" as header
+        header_idx = None
+        for i, line in enumerate(raw_lines):
+            if '"Symbol"' in line or ',Symbol,' in line or line.strip().startswith('"ClientAccountID"'):
+                header_idx = i
+                break
 
-        for line in raw_lines:
-            if "Open Positions" in line or "Financial Instrument" in line:
-                in_portfolio = True
-                continue
-            if in_portfolio and not header:
-                if "Symbol" in line:
-                    header = [h.strip().strip('"') for h in line.split(",")]
-                    continue
-            if in_portfolio and header:
-                if line.strip() == "" or line.startswith("Total") or line.startswith(","):
+        if header_idx is not None:
+            header = [h.strip().strip('"') for h in raw_lines[header_idx].split(",")]
+            data_rows = []
+            for line in raw_lines[header_idx + 1:]:
+                if line.strip() == "":
                     continue
                 vals = [v.strip().strip('"') for v in line.split(",")]
                 if len(vals) >= len(header):
                     data_rows.append(vals[:len(header)])
-
-        # Fallback: try simple CSV parse
-        if not data_rows:
+            df = pd.DataFrame(data_rows, columns=header)
+        else:
+            # Fallback: simple CSV
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file)
-            # Try to detect relevant columns
-            if 'Symbol' not in df.columns:
-                # Maybe first row is header
-                possible_cols = [c for c in df.columns if any(k in str(c).lower() for k in ['symbol', 'ticker', 'position', 'quantity'])]
-                if not possible_cols:
-                    df = pd.read_csv(uploaded_file, header=None)
-        else:
-            df = pd.DataFrame(data_rows, columns=header)
 
         # Clean numeric columns
-        numeric_cols = ['Position', 'Quantity', 'Market Price', 'Market Value', 'Average Cost',
-                        'Unrealized P&L', 'Cost Basis', 'Current Price', 'Mkt Value']
-        for col in numeric_cols:
+        for col in ['Quantity', 'MarkPrice', 'PositionValue', 'Position', 'Market Price', 'Market Value', 'Average Cost', 'Unrealized P&L']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('$', ''), errors='coerce')
 
-        # Find symbol and position columns
+        # Find symbol column
         symbol_col = None
-        for c in ['Symbol', 'symbol', 'Ticker', 'ticker', 'Financial Instrument']:
+        for c in ['Symbol', 'symbol', 'Ticker', 'Financial Instrument']:
             if c in df.columns:
                 symbol_col = c
                 break
 
+        # Find position/quantity column
         pos_col = None
-        for c in ['Position', 'Quantity', 'quantity', 'Shares']:
+        for c in ['Quantity', 'Position', 'quantity', 'Shares']:
             if c in df.columns:
                 pos_col = c
+                break
+
+        # Find price column
+        price_col = None
+        for c in ['MarkPrice', 'Market Price', 'Current Price']:
+            if c in df.columns:
+                price_col = c
+                break
+
+        # Find value column
+        value_col = None
+        for c in ['PositionValue', 'Market Value', 'Mkt Value']:
+            if c in df.columns:
+                value_col = c
+                break
+
+        # Find currency column
+        currency_col = None
+        for c in ['CurrencyPrimary', 'Currency']:
+            if c in df.columns:
+                currency_col = c
                 break
 
         if symbol_col is None:
@@ -119,34 +128,34 @@ if uploaded_file:
         st.dataframe(df, use_container_width=True)
 
         # --- Build portfolio summary for AI ---
+        # Separate JPY and USD positions
+        jpy_positions = df[df[currency_col] == 'JPY'] if currency_col else pd.DataFrame()
+        usd_positions = df[df[currency_col] == 'USD'] if currency_col else df
+
         portfolio_lines = []
         for _, row in df.iterrows():
             symbol = str(row[symbol_col]).strip()
             if not symbol or symbol == 'nan':
                 continue
 
-            parts = [f"銘柄: {symbol}"]
+            currency = str(row[currency_col]) if currency_col else "USD"
+            cur_mark = "¥" if currency == "JPY" else "$"
+
+            parts = [f"銘柄: {symbol} ({currency})"]
 
             if pos_col and pd.notna(row.get(pos_col)):
                 parts.append(f"数量: {row[pos_col]}")
-            for c in ['Market Price', 'Current Price', 'Mkt Price']:
-                if c in df.columns and pd.notna(row.get(c)):
-                    parts.append(f"現在価格: ${row[c]:.2f}")
-                    break
-            for c in ['Market Value', 'Mkt Value']:
-                if c in df.columns and pd.notna(row.get(c)):
-                    parts.append(f"時価: ${row[c]:,.0f}")
-                    break
-            for c in ['Average Cost', 'Avg Cost']:
-                if c in df.columns and pd.notna(row.get(c)):
-                    parts.append(f"平均取得価格: ${row[c]:.2f}")
-                    break
-            for c in ['Unrealized P&L', 'Unrealized PnL']:
-                if c in df.columns and pd.notna(row.get(c)):
-                    parts.append(f"含み損益: ${row[c]:,.0f}")
-                    break
+            if price_col and pd.notna(row.get(price_col)):
+                parts.append(f"価格: {cur_mark}{row[price_col]:,.2f}")
+            if value_col and pd.notna(row.get(value_col)):
+                parts.append(f"時価: {cur_mark}{row[value_col]:,.0f}")
 
             portfolio_lines.append(" | ".join(parts))
+
+        # Portfolio summary stats
+        jpy_total = jpy_positions[value_col].sum() if not jpy_positions.empty and value_col else 0
+        usd_total = usd_positions[value_col].sum() if not usd_positions.empty and value_col else 0
+        portfolio_lines.insert(0, f"## ポートフォリオ概要: JPY資産 ¥{jpy_total:,.0f} / USD資産 ${usd_total:,.0f}")
 
         portfolio_text = "\n".join(portfolio_lines)
 
