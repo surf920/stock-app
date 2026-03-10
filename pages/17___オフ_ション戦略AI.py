@@ -125,6 +125,23 @@ if uploaded_file:
         df = df[~df[symbol_col].str.contains('Total|Summary|---', na=False)]
 
         st.success(f"✅ {len(df)}銘柄のポートフォリオを読み込みました")
+
+        # --- USD/JPY rate for conversion ---
+        try:
+            usdjpy_hist = yf.Ticker("USDJPY=X").history(period="2d")
+            usdjpy_rate = float(usdjpy_hist["Close"].iloc[-1]) if not usdjpy_hist.empty else 150.0
+        except Exception:
+            usdjpy_rate = 150.0
+
+        # Sort by JPY-equivalent PositionValue (descending)
+        if value_col and currency_col:
+            df["_value_jpy"] = df.apply(
+                lambda row: row[value_col] * usdjpy_rate if str(row.get(currency_col, "JPY")) == "USD" else row[value_col],
+                axis=1
+            )
+            df = df.sort_values("_value_jpy", ascending=False).drop(columns=["_value_jpy"])
+
+        st.caption(f"💱 USD/JPY換算レート: ¥{usdjpy_rate:.1f}（PositionValueを円換算してソート）")
         st.dataframe(df, use_container_width=True)
 
         # --- Build portfolio summary for AI ---
@@ -155,7 +172,9 @@ if uploaded_file:
         # Portfolio summary stats
         jpy_total = jpy_positions[value_col].sum() if not jpy_positions.empty and value_col else 0
         usd_total = usd_positions[value_col].sum() if not usd_positions.empty and value_col else 0
-        portfolio_lines.insert(0, f"## ポートフォリオ概要: JPY資産 ¥{jpy_total:,.0f} / USD資産 ${usd_total:,.0f}")
+        usd_total_jpy = usd_total * usdjpy_rate
+        grand_total_jpy = jpy_total + usd_total_jpy
+        portfolio_lines.insert(0, f"## ポートフォリオ概要: JPY資産 ¥{jpy_total:,.0f} / USD資産 ${usd_total:,.0f}（¥{usd_total_jpy:,.0f}換算） / 合計 ¥{grand_total_jpy:,.0f}")
 
         portfolio_text = "\n".join(portfolio_lines)
 
