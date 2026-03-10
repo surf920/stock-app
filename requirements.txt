@@ -8,3 +8,5 @@ anthropic
 python-dotenv==1.0.0
 requests
 ephem
+beautifulsoup4
+lxml
