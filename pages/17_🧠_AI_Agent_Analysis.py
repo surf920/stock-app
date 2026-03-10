@@ -45,19 +45,56 @@ def call_claude_api(market_data_text):
 3. 個別の指標ごとに方向性を正確に記述すること（プラスなのにマイナスと書かない）
 4. 矛盾する記述をしないこと。懸念点と機会が矛盾する場合は理由を明記すること
 5. データに存在しない事実を推測・捏造しないこと
+6. 「信頼度」は統計モデルに基づかないため、代わりに「確度」として定性的に示すこと（高/中/低）
+
+【重要：流動性ドミノ分析】
+データに「流動性ドミノ（Alice Diagnosis入力）」セクションがある場合、
+ドミノの点灯状況（DXY→BTC→Credit→S&P500の連鎖）を最優先で分析すること。
+ドミノが2つ以上点灯している場合は、リスク評価を引き上げること。
+
+【重要：シナリオ分析】
+「答え」を出そうとするのではなく、必ず3つのシナリオを提示すること。
+各シナリオには「発火条件（何が起きたらこのシナリオになるか）」を具体的数値で明示。
 
 {
     "market_assessment": {
         "overall_risk": "低/中/高/極高",
-        "confidence": 75,
+        "confidence_level": "高/中/低",
+        "confidence_reasoning": "確度の根拠（どのデータが明確でどこが不確実か）",
         "cycle_phase": "Early/Mid/Late/Recession",
         "key_concerns": ["懸念1", "懸念2", "懸念3"],
         "opportunities": ["機会1", "機会2", "機会3"],
-        "market_regime": "リスクオン/リスクオフ/中立"
+        "market_regime": "リスクオン/リスクオフ/中立",
+        "domino_status": "流動性ドミノの状態（N/4点灯、各ステップの状況）"
+    },
+    "scenario_analysis": {
+        "scenario_a": {
+            "name": "シナリオ名",
+            "description": "概要",
+            "trigger": "このシナリオが現実化する具体的条件（数値含む）",
+            "portfolio_action": "このシナリオでの最適行動",
+            "likelihood": "高/中/低"
+        },
+        "scenario_b": {
+            "name": "シナリオ名",
+            "description": "概要",
+            "trigger": "このシナリオが現実化する具体的条件（数値含む）",
+            "portfolio_action": "このシナリオでの最適行動",
+            "likelihood": "高/中/低"
+        },
+        "scenario_c": {
+            "name": "シナリオ名",
+            "description": "概要",
+            "trigger": "このシナリオが現実化する具体的条件（数値含む）",
+            "portfolio_action": "このシナリオでの最適行動",
+            "likelihood": "高/中/低"
+        },
+        "key_indicators_to_watch": ["監視すべき指標と閾値1", "監視すべき指標と閾値2"]
     },
     "sector_analysis": {
         "overweight": ["推奨セクター1", "推奨セクター2"],
         "underweight": ["回避セクター1", "回避セクター2"],
+        "rotation_status": "セクターローテーションの現在地",
         "reasoning": "セクター判断の理由"
     },
     "portfolio_recommendations": [
@@ -82,8 +119,8 @@ def call_claude_api(market_data_text):
         {
             "action": "具体的なアクション",
             "ticker": "ティッカー",
-            "confidence": 80,
-            "rationale": "根拠",
+            "confidence_level": "高/中/低",
+            "rationale": "根拠（具体的データ数値を引用）",
             "timeframe": "期間"
         }
     ],
@@ -100,7 +137,7 @@ def call_claude_api(market_data_text):
     },
     "contrarian_view": {
         "current_regime": "現在のレジーム（リスクオン/リスクオフ）",
-        "regime_reversal_triggers": ["反転トリガー1", "反転トリガー2", "反転トリガー3"],
+        "regime_reversal_triggers": ["反転トリガー1（具体的数値）", "反転トリガー2", "反転トリガー3"],
         "early_signals_to_watch": ["注目すべき先行指標1", "注目すべき先行指標2"],
         "contrarian_trades": [
             {"trade": "具体的な逆張りトレード", "trigger": "エントリー条件", "risk": "リスク"}
@@ -113,13 +150,13 @@ def call_claude_api(market_data_text):
 重要な分析ポイント:
 1. 各指標の相関関係を分析（例: VIXとセクターの関係、銅金レシオと景気サイクル）
 2. 矛盾するシグナルがあれば明示
-3. Polymarket予測と市場データの整合性を確認
-4. 具体的なティッカーと数値を含めた実行可能な推奨を提示
-5. リスク管理を最優先に考える
-6. 【逆張り分析】現在のレジームが反転する条件を具体的に分析すること:
-   - リスクオフ時: 何が起きればリスクオンに転換するか？どの指標が先行シグナルになるか？
-   - リスクオン時: 何が起きればリスクオフに転換するか？どの指標に警戒すべきか？
-   - 逆張りトレードの具体的なエントリー条件とリスクを明記"""
+3. 流動性ドミノの状態（DXY→BTC→Credit→S&P500）を最優先で確認
+4. 信用市場ストレス（HYG/LQD）とAIバブル指標（IGV/SPY比率）を必ず分析
+5. Polymarket予測と市場データの整合性を確認
+6. 具体的なティッカーと数値を含めた実行可能な推奨を提示
+7. リスク管理を最優先に考える
+8. 【シナリオ分析】3つのシナリオを必ず提示し、各シナリオの発火条件を具体的数値で明示
+9. 【逆張り分析】現在のレジームが反転する条件を具体的に分析すること"""
 
     user_message = f"""以下の市場データを分析してください。
 【指示】
@@ -127,6 +164,8 @@ def call_claude_api(market_data_text):
 - change_1m_pct の数値がプラスなら上昇、マイナスなら下落
 - 個別指標の動きを全体に一般化しないこと
 - 全指標の相関関係を考慮し、統合的な投資判断を提示すること
+- 流動性ドミノ（Alice Diagnosis）の点灯状況を最優先で確認すること
+- 必ず3つのシナリオを提示すること（答えを出すな、場合分けを出せ）
 
 {market_data_text}
 
@@ -140,7 +179,7 @@ def call_claude_api(market_data_text):
 
     payload = {
         "model": "claude-sonnet-4-20250514",
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}]
     }
@@ -163,7 +202,7 @@ st.markdown("---")
 if st.button("🔍 全データ収集 → AI分析を実行", type="primary", use_container_width=True):
 
     # Step 1: データ収集
-    with st.spinner("📊 全ページの指標データを収集中... (30-60秒)"):
+    with st.spinner("📊 全ページの指標データを収集中... (60-120秒)"):
         all_data = collect_all()
 
     # ポートフォリオ処理
@@ -185,7 +224,16 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                          if k != "timestamp" and isinstance(v, (dict, list))
                          and not (isinstance(v, dict) and "error" in v))
     extra = f" + ポートフォリオ{portfolio_data['count']}銘柄" if portfolio_data else ""
-    st.success(f"✅ {collected_count}/11 カテゴリのデータを収集完了{extra}")
+    st.success(f"✅ {collected_count}/20 カテゴリのデータを収集完了{extra}")
+
+    # 流動性ドミノのクイックサマリー
+    domino = all_data.get("liquidity_domino", {})
+    if isinstance(domino, dict) and "_domino_total" in domino:
+        dt = domino["_domino_total"]
+        severity_color = {
+            "CRITICAL": "🔴", "WARNING": "🟠", "CAUTION": "🟡", "NORMAL": "🟢"
+        }.get(dt.get("severity", ""), "⚪")
+        st.warning(f"{severity_color} 流動性ドミノ: {dt.get('signal', 'N/A')} ({dt.get('severity', '')})")
 
     # データプレビュー
     with st.expander("📋 収集したデータを確認"):
@@ -193,7 +241,7 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
         st.text(market_text)
 
     # Step 2: Claude API分析
-    with st.spinner("🤖 Claude APIが市場を分析中... (10-30秒)"):
+    with st.spinner("🤖 Claude APIが市場を分析中... (15-45秒)"):
         try:
             market_text = format_for_prompt(all_data)
             if portfolio_text:
@@ -213,7 +261,8 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 risk_color = {"低": "🟢", "中": "🟡", "高": "🟠", "極高": "🔴"}.get(risk, "⚪")
                 st.metric("総合リスク", f"{risk_color} {risk}")
             with col2:
-                st.metric("信頼度", f"{ma.get('confidence', 'N/A')}%")
+                conf = ma.get("confidence_level", "N/A")
+                st.metric("確度", f"{conf}")
             with col3:
                 st.metric("景気サイクル", ma.get("cycle_phase", "N/A"))
 
@@ -222,7 +271,12 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 regime = ma.get("market_regime", "N/A")
                 st.info(f"📈 マーケットレジーム: **{regime}**")
             with col5:
-                pass
+                domino_status = ma.get("domino_status", "N/A")
+                st.warning(f"🎯 ドミノ状態: **{domino_status}**")
+
+            # 確度の根拠
+            if ma.get("confidence_reasoning"):
+                st.caption(f"📝 確度の根拠: {ma['confidence_reasoning']}")
 
             col_a, col_b = st.columns(2)
             with col_a:
@@ -233,6 +287,29 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 st.markdown("**💡 投資機会:**")
                 for o in ma.get("opportunities", []):
                     st.success(o)
+
+            # === 新規: シナリオ分析 ===
+            st.markdown("---")
+            st.subheader("🎭 シナリオ分析（場合分け）")
+            sa_scenarios = analysis.get("scenario_analysis", {})
+            if sa_scenarios:
+                scenario_cols = st.columns(3)
+                for i, key in enumerate(["scenario_a", "scenario_b", "scenario_c"]):
+                    sc = sa_scenarios.get(key, {})
+                    if sc:
+                        with scenario_cols[i]:
+                            likelihood = sc.get("likelihood", "")
+                            l_icon = {"高": "🔴", "中": "🟡", "低": "🟢"}.get(likelihood, "⚪")
+                            st.markdown(f"### {l_icon} {sc.get('name', f'シナリオ{i+1}')}")
+                            st.markdown(f"**可能性:** {likelihood}")
+                            st.markdown(f"{sc.get('description', '')}")
+                            st.info(f"**発火条件:** {sc.get('trigger', '')}")
+                            st.success(f"**最適行動:** {sc.get('portfolio_action', '')}")
+
+                if sa_scenarios.get("key_indicators_to_watch"):
+                    st.markdown("**👁 監視すべき指標:**")
+                    for ind in sa_scenarios["key_indicators_to_watch"]:
+                        st.info(f"📡 {ind}")
 
             # セクター分析
             st.markdown("---")
@@ -247,6 +324,8 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
                 st.markdown("**❌ アンダーウェイト推奨:**")
                 for s in sa.get("underweight", []):
                     st.error(s)
+            if sa.get("rotation_status"):
+                st.info(f"🔀 ローテーション状況: {sa['rotation_status']}")
             if sa.get("reasoning"):
                 st.caption(sa["reasoning"])
 
@@ -330,9 +409,9 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
             st.markdown("---")
             st.subheader("🎯 具体的アクション")
             for act in analysis.get("specific_actions", []):
-                cv = act.get("confidence", 0)
-                icon = "🟢" if cv >= 80 else "🟡" if cv >= 60 else "🔴"
-                st.markdown(f"{icon} **{act.get('action', '')}** - {act.get('ticker', '')} (信頼度: {cv}%)")
+                cl = act.get("confidence_level", "中")
+                icon = {"高": "🟢", "中": "🟡", "低": "🔴"}.get(cl, "⚪")
+                st.markdown(f"{icon} **{act.get('action', '')}** - {act.get('ticker', '')} (確度: {cl})")
                 st.caption(f"{act.get('rationale', '')} | 期間: {act.get('timeframe', '')}")
 
             # Polymarket分析
@@ -400,21 +479,34 @@ if st.button("🔍 全データ収集 → AI分析を実行", type="primary", us
 
 # サイドバー
 with st.sidebar:
-    st.markdown("### 📊 データソース")
+    st.markdown("### 📊 データソース (20カテゴリ)")
     st.markdown("""
-    - 市場指数 (S&P500, NASDAQ, VIX...)
-    - 金利・債券 (米国債利回り)
+    **既存 (11)**
+    - 市場指数 (S&P500, NASDAQ, VIX, Russell2000...)
+    - 金利・債券 (米国債利回り, イールドカーブ)
     - 為替 (USD/JPY, EUR/USD...)
-    - 商品 (金, 銅, 原油)
+    - 商品 (金, 銅, 原油, 天然ガス)
     - 暗号資産 (BTC, ETH, SOL)
     - セクターETF (11セクター)
     - 半導体 (SOX, SMH)
     - 海運 (BDRY, SBLK)
-    - 不動産 (XLRE, ITB)
+    - 不動産 (XLRE, ITB, MBB)
     - オプション (VIX)
     - 予測市場 (Polymarket)
+    
+    **新規 (9)**
+    - 🏦 金利サイクル (TIP, RINF, SHV)
+    - 💳 信用ストレス (HYG, LQD, JNK)
+    - 🤖 AI/テックバブル (IGV, ARKK, IGV/SPY)
+    - 📊 高度ボラティリティ (UVXY, SVXY, TLT)
+    - 🌍 通貨強弱 (9通貨ペア)
+    - 🎯 流動性ドミノ (Alice Diagnosis入力)
+    - 🔀 セクターローテーション分析
+    - ⚔️ BTC vs 金融株
+    - ⚠️ 市場の歪み (TAIL, EMB, BKLN)
     """)
     st.markdown("---")
     st.markdown("### ⚙️ 設定")
     st.caption("モデル: Claude Sonnet 4")
     st.caption("データ: yfinance + Polymarket API")
+    st.caption("max_tokens: 8192")

@@ -1,6 +1,7 @@
 """
 core/data_collector.py
-全ページの主要指標を一括収集するモジュール
+全ページの主要指標を一括収集するモジュール（拡張版 v2）
+11カテゴリ → 20カテゴリに拡張
 Phase 2でFastAPIにそのまま移行可能な設計
 """
 
@@ -45,8 +46,41 @@ def get_price_change(ticker, period="1mo"):
     return {"price": round(current, 2), "change_1m_pct": round(change_pct, 2)}
 
 
+def get_price_with_ma(ticker, ma_periods=[50, 200], period="1y"):
+    """ティッカーの価格と移動平均線、1ヶ月変動率を取得"""
+    data = yf.download(ticker, period=period, progress=False)
+    if data.empty:
+        return None
+    if isinstance(data.columns, pd.MultiIndex):
+        close = data[("Close", ticker)] if ("Close", ticker) in data.columns else data["Close"].iloc[:, 0]
+    else:
+        close = data["Close"]
+
+    current = float(close.iloc[-1])
+
+    # 1ヶ月前の価格（約21営業日前）
+    lookback = min(21, len(close) - 1)
+    prev = float(close.iloc[-lookback - 1]) if len(close) > lookback else float(close.iloc[0])
+    change_1m_pct = ((current - prev) / prev) * 100
+
+    result = {
+        "price": round(current, 2),
+        "change_1m_pct": round(change_1m_pct, 2),
+    }
+    for p in ma_periods:
+        if len(close) >= p:
+            ma_val = float(close.rolling(p).mean().iloc[-1])
+            result[f"MA{p}"] = round(ma_val, 2)
+            result[f"vs_MA{p}_pct"] = round(((current - ma_val) / ma_val) * 100, 2)
+    return result
+
+
+# ============================================================
+# 既存11カテゴリ（改善含む）
+# ============================================================
+
 def collect_market_indices():
-    """主要市場指数"""
+    """【1】主要市場指数"""
     def _fetch():
         tickers = {
             "S&P500": "^GSPC",
@@ -54,6 +88,8 @@ def collect_market_indices():
             "日経225": "^N225",
             "VIX": "^VIX",
             "DXY(ドル指数)": "DX-Y.NYB",
+            "Russell2000": "^RUT",
+            "TOPIX": "1306.T",
         }
         results = {}
         for name, ticker in tickers.items():
@@ -65,7 +101,7 @@ def collect_market_indices():
 
 
 def collect_bond_yields():
-    """金利・債券"""
+    """【2】金利・債券"""
     def _fetch():
         tickers = {
             "米国2年債": "^IRX",
@@ -90,7 +126,7 @@ def collect_bond_yields():
 
 
 def collect_forex():
-    """為替"""
+    """【3】為替"""
     def _fetch():
         tickers = {
             "USD/JPY": "USDJPY=X",
@@ -108,7 +144,7 @@ def collect_forex():
 
 
 def collect_commodities():
-    """商品・インフレ指標"""
+    """【4】商品・インフレ指標"""
     def _fetch():
         tickers = {
             "金(Gold)": "GC=F",
@@ -131,7 +167,7 @@ def collect_commodities():
 
 
 def collect_crypto():
-    """暗号資産"""
+    """【5】暗号資産"""
     def _fetch():
         tickers = {
             "Bitcoin": "BTC-USD",
@@ -148,7 +184,7 @@ def collect_crypto():
 
 
 def collect_sectors():
-    """セクターETF（ローテーション分析用）"""
+    """【6】セクターETF（ローテーション分析用）"""
     def _fetch():
         tickers = {
             "テクノロジー(XLK)": "XLK",
@@ -179,7 +215,7 @@ def collect_sectors():
 
 
 def collect_semiconductor():
-    """半導体指標"""
+    """【7】半導体指標"""
     def _fetch():
         results = {}
         sox = get_price_change("^SOX")
@@ -193,7 +229,7 @@ def collect_semiconductor():
 
 
 def collect_shipping():
-    """海運・バルチック指数"""
+    """【8】海運・バルチック指数"""
     def _fetch():
         results = {}
         bdry = get_price_change("BDRY")
@@ -207,7 +243,7 @@ def collect_shipping():
 
 
 def collect_real_estate():
-    """不動産・住宅"""
+    """【9】不動産・住宅"""
     def _fetch():
         tickers = {
             "XLRE(不動産ETF)": "XLRE",
@@ -224,7 +260,7 @@ def collect_real_estate():
 
 
 def collect_options_volatility():
-    """オプション・ボラティリティ"""
+    """【10】オプション・ボラティリティ"""
     def _fetch():
         results = {}
         vix = get_price_change("^VIX", period="5d")
@@ -244,7 +280,7 @@ def collect_options_volatility():
 
 
 def collect_polymarket():
-    """Polymarket予測市場データ"""
+    """【11】Polymarket予測市場データ"""
     def _fetch():
         url = "https://gamma-api.polymarket.com/events"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -295,34 +331,490 @@ def collect_polymarket():
     return safe_fetch(_fetch, "polymarket")
 
 
+# ============================================================
+# 新規9カテゴリ（合計20カテゴリ）
+# ============================================================
+
+def collect_interest_rate_cycle():
+    """【12】金利サイクル・FRB政策指標
+    → 為替と金利サイクル ページ用
+    FRBの政策方向を読むための追加指標群"""
+    def _fetch():
+        results = {}
+
+        # TIPS（インフレ連動債）→ 実質金利の代理変数
+        tip = get_price_change("TIP")
+        if tip:
+            results["TIP(インフレ連動債ETF)"] = tip
+
+        # 5年ブレークイーブンインフレ率の代理（T5YIFR → yfinanceではETFで代替）
+        # RINF: ProShares Inflation Expectations ETF
+        rinf = get_price_change("RINF")
+        if rinf:
+            results["RINF(インフレ期待ETF)"] = rinf
+
+        # 短期金利 → FF金利の代理（SHV: 短期国債ETF）
+        shv = get_price_change("SHV")
+        if shv:
+            results["SHV(短期国債ETF)"] = shv
+
+        # 2年債-FF金利スプレッド = 利下げ期待の温度計
+        # BIL: 1-3ヶ月 T-Bill ETF
+        bil = get_price_change("BIL")
+        if bil:
+            results["BIL(T-Bill ETF)"] = bil
+
+        # 金利方向の判定ロジック
+        if tip and shv:
+            # TIPが上昇 → インフレ期待上昇 → 引き締め的
+            # SHVが安定 → 短期金利据え置き
+            tip_chg = tip.get("change_1m_pct", 0)
+            if tip_chg > 1:
+                results["_rate_cycle_signal"] = "インフレ期待上昇 → 利下げ後退リスク"
+            elif tip_chg < -1:
+                results["_rate_cycle_signal"] = "インフレ期待低下 → 利下げ接近の可能性"
+            else:
+                results["_rate_cycle_signal"] = "インフレ期待安定 → 様子見"
+
+        return results
+    return safe_fetch(_fetch, "interest_rate_cycle")
+
+
+def collect_credit_stress():
+    """【13】信用市場ストレス指標
+    → Alice Diagnosis ページ（ドミノ Step 3: Credit Crack）用
+    信用市場の亀裂を早期検知する"""
+    def _fetch():
+        results = {}
+
+        # HYG: ハイイールド社債ETF（信用リスクの温度計）
+        hyg = get_price_change("HYG")
+        if hyg:
+            results["HYG(ハイイールド社債)"] = hyg
+
+        # LQD: 投資適格社債ETF
+        lqd = get_price_change("LQD")
+        if lqd:
+            results["LQD(投資適格社債)"] = lqd
+
+        # JNK: SPDRハイイールドETF（HYGと合わせて確認）
+        jnk = get_price_change("JNK")
+        if jnk:
+            results["JNK(ハイイールドETF)"] = jnk
+
+        # 信用スプレッドの代理指標: HYG/LQD比率
+        if hyg and lqd:
+            spread_ratio = hyg["price"] / lqd["price"]
+            hyg_chg = hyg.get("change_1m_pct", 0)
+            lqd_chg = lqd.get("change_1m_pct", 0)
+            spread_widening = lqd_chg - hyg_chg  # HYGがLQDより下落 = スプレッド拡大
+
+            results["信用スプレッド代理(HYG/LQD)"] = {
+                "value": round(spread_ratio, 4),
+                "spread_change": round(spread_widening, 2),
+            }
+
+            # 信用ストレス判定
+            if spread_widening > 2:
+                results["_credit_signal"] = "🔴 信用スプレッド急拡大 → 信用収縮リスク"
+            elif spread_widening > 0.5:
+                results["_credit_signal"] = "🟡 信用スプレッドやや拡大 → 要監視"
+            else:
+                results["_credit_signal"] = "🟢 信用市場安定"
+
+        return results
+    return safe_fetch(_fetch, "credit_stress")
+
+
+def collect_ai_bubble():
+    """【14】AIバブル・テック指標
+    → AIバブル崩壊シナリオ ページ用
+    → Alice Diagnosis（SaaS Erosion Tracker）用"""
+    def _fetch():
+        results = {}
+
+        # IGV: iShares Expanded Tech-Software Sector ETF
+        igv = get_price_change("IGV")
+        if igv:
+            results["IGV(ソフトウェアETF)"] = igv
+
+        # ARKK: ARK Innovation ETF（投機的テック指標）
+        arkk = get_price_change("ARKK")
+        if arkk:
+            results["ARKK(イノベーションETF)"] = arkk
+
+        # BOTZ: Global X Robotics & AI ETF
+        botz = get_price_change("BOTZ")
+        if botz:
+            results["BOTZ(AI・ロボティクスETF)"] = botz
+
+        # QQQ: NASDAQ100 ETF
+        qqq = get_price_change("QQQ")
+        if qqq:
+            results["QQQ(NASDAQ100)"] = qqq
+
+        # IGV/SPY比率 → SaaS Erosion Tracker
+        spy = get_price_change("SPY")
+        if igv and spy:
+            igv_spy_ratio = igv["price"] / spy["price"]
+            results["IGV/SPY比率(SaaS侵食度)"] = {
+                "value": round(igv_spy_ratio, 4),
+            }
+            # IGVがSPYをアンダーパフォーム → AI/SaaS株の優位性崩壊
+            relative_perf = igv.get("change_1m_pct", 0) - spy.get("change_1m_pct", 0)
+            results["IGV対SPY相対パフォーマンス"] = {
+                "value": round(relative_perf, 2),
+            }
+            if relative_perf < -5:
+                results["_ai_bubble_signal"] = "🔴 SaaS/AIセクター急落 → バブル崩壊リスク"
+            elif relative_perf < -2:
+                results["_ai_bubble_signal"] = "🟡 SaaS/AIセクター弱含み → 警戒"
+            else:
+                results["_ai_bubble_signal"] = "🟢 SaaS/AIセクター堅調"
+
+        return results
+    return safe_fetch(_fetch, "ai_bubble")
+
+
+def collect_advanced_volatility():
+    """【15】高度なボラティリティ指標
+    → オプション市場 ページ用
+    → 市場の歪みとデリバティブ ページ用"""
+    def _fetch():
+        results = {}
+
+        # MOVE指数の代理（債券ボラティリティ）→ 直接取得不可のためTLT ATRで代替
+        tlt = get_price_change("TLT", period="5d")
+        if tlt:
+            results["TLT(長期債ETF/5日)"] = tlt
+
+        # UVXY: ProShares Ultra VIX Short-Term Futures ETF（VIX先物構造の代理）
+        uvxy = get_price_change("UVXY", period="5d")
+        if uvxy:
+            results["UVXY(VIX先物ETF/5日)"] = uvxy
+
+        # SVXY: ProShares Short VIX（VIXショート → コンタンゴ/バックワーデーション判定）
+        svxy = get_price_change("SVXY", period="5d")
+        if svxy:
+            results["SVXY(VIXショートETF/5日)"] = svxy
+
+        # VIXターム構造の代理: UVXY/SVXY比率
+        if uvxy and svxy:
+            vix_term = uvxy["price"] / svxy["price"]
+            results["VIXターム構造(UVXY/SVXY)"] = {"value": round(vix_term, 4)}
+
+            uvxy_chg = uvxy.get("change_1m_pct", 0)
+            svxy_chg = svxy.get("change_1m_pct", 0)
+            if uvxy_chg > 10 and svxy_chg < -5:
+                results["_vol_signal"] = "🔴 VIXバックワーデーション → パニック的状況"
+            elif uvxy_chg > 5:
+                results["_vol_signal"] = "🟡 短期VIX上昇 → 不安定"
+            else:
+                results["_vol_signal"] = "🟢 VIXコンタンゴ → 通常"
+
+        return results
+    return safe_fetch(_fetch, "advanced_volatility")
+
+
+def collect_currency_strength():
+    """【16】世界の通貨強弱
+    → 世界の通貨強弱 ページ用"""
+    def _fetch():
+        tickers = {
+            "AUD/USD": "AUDUSD=X",
+            "NZD/USD": "NZDUSD=X",
+            "USD/CHF": "USDCHF=X",
+            "USD/CAD": "USDCAD=X",
+            "USD/MXN": "USDMXN=X",
+            "USD/ZAR": "USDZAR=X",
+            "USD/TRY": "USDTRY=X",
+            "USD/BRL": "USDBRL=X",
+            "USD/KRW": "USDKRW=X",
+        }
+        results = {}
+        for name, ticker in tickers.items():
+            info = get_price_change(ticker)
+            if info:
+                results[name] = info
+
+        # ドル強弱判定: 主要通貨に対するドルの平均変動
+        usd_changes = []
+        for name, val in results.items():
+            chg = val.get("change_1m_pct", 0)
+            if name.startswith("USD/"):
+                usd_changes.append(chg)  # ドル高 = プラス
+            else:
+                usd_changes.append(-chg)  # ドル高 = 相手通貨安 = マイナス反転
+
+        if usd_changes:
+            avg_usd = np.mean(usd_changes)
+            results["_dollar_strength"] = {
+                "avg_change_pct": round(avg_usd, 2),
+                "signal": "ドル高" if avg_usd > 1 else "ドル安" if avg_usd < -1 else "中立",
+            }
+
+        return results
+    return safe_fetch(_fetch, "currency_strength")
+
+
+def collect_liquidity_domino():
+    """【17】流動性ドミノ指標（Alice Diagnosis入力）
+    → Alice Diagnosis ページ用
+    DXY → BTC → Credit → S&P500 のドミノ連鎖を監視"""
+    def _fetch():
+        results = {}
+
+        # Step 1: DXYスパイク判定
+        dxy = get_price_with_ma("DX-Y.NYB", ma_periods=[50, 200])
+        if dxy:
+            results["DXY"] = dxy
+            dxy_price = dxy["price"]
+            if dxy_price > 105:
+                results["_domino_step1"] = "🔴 DXY高水準 → 流動性吸収中"
+            elif dxy_price > 100:
+                results["_domino_step1"] = "🟡 DXY上昇傾向 → 要警戒"
+            else:
+                results["_domino_step1"] = "🟢 DXY正常範囲"
+
+        # Step 2: BTC カナリア（BTCがMA50を下回っているか）
+        btc = get_price_with_ma("BTC-USD", ma_periods=[50, 200])
+        if btc:
+            results["BTC(MA分析)"] = btc
+            if "vs_MA50_pct" in btc:
+                if btc["vs_MA50_pct"] < -10:
+                    results["_domino_step2"] = "🔴 BTC MA50大幅下回り → リスク資産崩壊中"
+                elif btc["vs_MA50_pct"] < 0:
+                    results["_domino_step2"] = "🟡 BTC MA50下回り → カナリア警告"
+                else:
+                    results["_domino_step2"] = "🟢 BTC MA50上 → 正常"
+
+        # Step 3: 信用クラック（HYGの急落）
+        hyg = get_price_with_ma("HYG", ma_periods=[50])
+        if hyg:
+            results["HYG(MA分析)"] = hyg
+            if "vs_MA50_pct" in hyg:
+                if hyg["vs_MA50_pct"] < -3:
+                    results["_domino_step3"] = "🔴 信用市場クラック → HYG急落中"
+                elif hyg["vs_MA50_pct"] < -1:
+                    results["_domino_step3"] = "🟡 信用市場にストレス"
+                else:
+                    results["_domino_step3"] = "🟢 信用市場安定"
+
+        # Step 4: S&P500メルトダウン
+        spy = get_price_with_ma("SPY", ma_periods=[50, 200])
+        if spy:
+            results["SPY(MA分析)"] = spy
+            if "vs_MA200_pct" in spy:
+                if spy["vs_MA200_pct"] < -10:
+                    results["_domino_step4"] = "🔴 S&P500メルトダウン → MA200大幅下回り"
+                elif spy["vs_MA200_pct"] < 0:
+                    results["_domino_step4"] = "🟡 S&P500 MA200割れ → ベアマーケット警戒"
+                else:
+                    results["_domino_step4"] = "🟢 S&P500 MA200上 → 強気継続"
+
+        # ドミノ総合判定
+        domino_count = 0
+        for key in ["_domino_step1", "_domino_step2", "_domino_step3", "_domino_step4"]:
+            if key in results and "🔴" in results[key]:
+                domino_count += 1
+
+        results["_domino_total"] = {
+            "active": domino_count,
+            "total": 4,
+            "signal": f"ドミノ {domino_count}/4 点灯",
+            "severity": "CRITICAL" if domino_count >= 3 else "WARNING" if domino_count >= 2 else "CAUTION" if domino_count >= 1 else "NORMAL"
+        }
+
+        return results
+    return safe_fetch(_fetch, "liquidity_domino")
+
+
+def collect_sector_rotation():
+    """【18】セクターローテーション分析
+    → セクターローテーション ページ用
+    攻撃的 vs 防御的セクターの相対強度"""
+    def _fetch():
+        results = {}
+
+        # 攻撃的セクター
+        offensive = {"XLK": "テクノロジー", "XLY": "一般消費財", "XLI": "資本財", "XLF": "金融"}
+        # 防御的セクター
+        defensive = {"XLU": "公益", "XLP": "生活必需品", "XLV": "ヘルスケア", "XLRE": "不動産"}
+
+        off_changes = []
+        def_changes = []
+
+        for ticker, name in offensive.items():
+            info = get_price_change(ticker)
+            if info:
+                results[f"攻撃_{name}({ticker})"] = info
+                off_changes.append(info.get("change_1m_pct", 0))
+
+        for ticker, name in defensive.items():
+            info = get_price_change(ticker)
+            if info:
+                results[f"防御_{name}({ticker})"] = info
+                def_changes.append(info.get("change_1m_pct", 0))
+
+        if off_changes and def_changes:
+            off_avg = np.mean(off_changes)
+            def_avg = np.mean(def_changes)
+            rotation = off_avg - def_avg
+
+            results["_rotation_analysis"] = {
+                "offensive_avg": round(off_avg, 2),
+                "defensive_avg": round(def_avg, 2),
+                "rotation_score": round(rotation, 2),
+            }
+
+            if rotation > 3:
+                results["_rotation_signal"] = "強いリスクオン（攻撃的セクター優勢）"
+                results["_cycle_hint"] = "Early〜Mid サイクル"
+            elif rotation > 0:
+                results["_rotation_signal"] = "やや攻撃的（緩やかなリスクオン）"
+                results["_cycle_hint"] = "Mid サイクル"
+            elif rotation > -3:
+                results["_rotation_signal"] = "やや防御的（緩やかなリスクオフ）"
+                results["_cycle_hint"] = "Late サイクル"
+            else:
+                results["_rotation_signal"] = "強いリスクオフ（防御的セクター優勢）"
+                results["_cycle_hint"] = "Late〜Recession サイクル"
+
+        return results
+    return safe_fetch(_fetch, "sector_rotation")
+
+
+def collect_btc_vs_financials():
+    """【19】BTC vs 金融株
+    → BTCと金融株の対決 ページ用"""
+    def _fetch():
+        results = {}
+
+        btc = get_price_change("BTC-USD")
+        xlf = get_price_change("XLF")
+
+        if btc:
+            results["Bitcoin"] = btc
+        if xlf:
+            results["XLF(金融ETF)"] = xlf
+
+        if btc and xlf:
+            btc_chg = btc.get("change_1m_pct", 0)
+            xlf_chg = xlf.get("change_1m_pct", 0)
+            relative = btc_chg - xlf_chg
+            results["BTC対金融_相対パフォーマンス"] = {
+                "value": round(relative, 2),
+            }
+            if relative > 10:
+                results["_btc_fin_signal"] = "BTC圧倒的優勢 → リスクオン/投機的"
+            elif relative > 0:
+                results["_btc_fin_signal"] = "BTC優勢 → デジタル資産への資金流入"
+            elif relative > -10:
+                results["_btc_fin_signal"] = "金融株優勢 → 伝統的資産回帰"
+            else:
+                results["_btc_fin_signal"] = "金融株圧倒的優勢 → リスクオフ/暗号資産離れ"
+
+        # GBTC（Grayscale Bitcoin Trust）も追跡
+        gbtc = get_price_change("GBTC")
+        if gbtc:
+            results["GBTC(ビットコイン信託)"] = gbtc
+
+        return results
+    return safe_fetch(_fetch, "btc_vs_financials")
+
+
+def collect_market_distortions():
+    """【20】市場の歪み・デリバティブ
+    → 市場の歪みとデリバティブ ページ用"""
+    def _fetch():
+        results = {}
+
+        # TAIL: Cambria Tail Risk ETF（テールリスクヘッジの価格）
+        tail = get_price_change("TAIL")
+        if tail:
+            results["TAIL(テールリスクETF)"] = tail
+
+        # CDS代理: EMB（新興国債ETF）vs AGG（米国総合債券ETF）
+        emb = get_price_change("EMB")
+        if emb:
+            results["EMB(新興国債券ETF)"] = emb
+
+        agg = get_price_change("AGG")
+        if agg:
+            results["AGG(米国総合債券ETF)"] = agg
+
+        # 新興国スプレッド代理
+        if emb and agg:
+            em_spread = emb.get("change_1m_pct", 0) - agg.get("change_1m_pct", 0)
+            results["新興国スプレッド変化"] = {
+                "value": round(em_spread, 2),
+            }
+            if em_spread < -3:
+                results["_distortion_signal"] = "🔴 新興国債からの資金流出加速"
+            elif em_spread < -1:
+                results["_distortion_signal"] = "🟡 新興国に若干のストレス"
+            else:
+                results["_distortion_signal"] = "🟢 新興国債券市場安定"
+
+        # BKLN: 変動金利ローンETF（信用リスクのもう一つの温度計）
+        bkln = get_price_change("BKLN")
+        if bkln:
+            results["BKLN(変動金利ローンETF)"] = bkln
+
+        return results
+    return safe_fetch(_fetch, "market_distortions")
+
+
+# ============================================================
+# collect_all() — 全20カテゴリを一括収集
+# ============================================================
+
 def collect_all():
-    """全データを一括収集"""
+    """全データを一括収集（20カテゴリ）"""
     data = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "market_indices": collect_market_indices(),
-        "bond_yields": collect_bond_yields(),
-        "forex": collect_forex(),
-        "commodities": collect_commodities(),
-        "crypto": collect_crypto(),
-        "sectors": collect_sectors(),
-        "semiconductor": collect_semiconductor(),
-        "shipping": collect_shipping(),
-        "real_estate": collect_real_estate(),
-        "options_volatility": collect_options_volatility(),
-        "polymarket": collect_polymarket(),
+
+        # --- 既存11カテゴリ ---
+        "market_indices": collect_market_indices(),         # 1
+        "bond_yields": collect_bond_yields(),               # 2
+        "forex": collect_forex(),                           # 3
+        "commodities": collect_commodities(),               # 4
+        "crypto": collect_crypto(),                         # 5
+        "sectors": collect_sectors(),                       # 6
+        "semiconductor": collect_semiconductor(),           # 7
+        "shipping": collect_shipping(),                     # 8
+        "real_estate": collect_real_estate(),               # 9
+        "options_volatility": collect_options_volatility(),  # 10
+        "polymarket": collect_polymarket(),                 # 11
+
+        # --- 新規9カテゴリ ---
+        "interest_rate_cycle": collect_interest_rate_cycle(),  # 12
+        "credit_stress": collect_credit_stress(),              # 13
+        "ai_bubble": collect_ai_bubble(),                      # 14
+        "advanced_volatility": collect_advanced_volatility(),  # 15
+        "currency_strength": collect_currency_strength(),      # 16
+        "liquidity_domino": collect_liquidity_domino(),        # 17
+        "sector_rotation": collect_sector_rotation(),          # 18
+        "btc_vs_financials": collect_btc_vs_financials(),      # 19
+        "market_distortions": collect_market_distortions(),    # 20
     }
     return data
 
 
+# ============================================================
+# format_for_prompt() — 全20カテゴリをテキスト化
+# ============================================================
+
 def format_for_prompt(data):
-    """Claude APIに送るためにデータをテキスト化"""
+    """Claude APIに送るためにデータをテキスト化（20カテゴリ対応）"""
     lines = []
     lines.append(f"=== 市場データ収集結果 ({data['timestamp']}) ===\n")
 
     sections = {
+        # 既存
         "market_indices": "📊 主要市場指数",
         "bond_yields": "📈 金利・債券",
-        "forex": "💱 為替",
+        "forex": "💱 為替（主要通貨）",
         "commodities": "🛢 商品・インフレ",
         "crypto": "🪙 暗号資産",
         "sectors": "🔄 セクターETF (1ヶ月変動)",
@@ -330,6 +822,16 @@ def format_for_prompt(data):
         "shipping": "🚢 海運",
         "real_estate": "🏠 不動産",
         "options_volatility": "📉 オプション・ボラティリティ",
+        # 新規
+        "interest_rate_cycle": "🏦 金利サイクル・FRB政策",
+        "credit_stress": "💳 信用市場ストレス",
+        "ai_bubble": "🤖 AI/テックバブル指標",
+        "advanced_volatility": "📊 高度ボラティリティ分析",
+        "currency_strength": "🌍 世界の通貨強弱",
+        "liquidity_domino": "🎯 流動性ドミノ（Alice Diagnosis入力）",
+        "sector_rotation": "🔀 セクターローテーション分析",
+        "btc_vs_financials": "⚔️ BTC vs 金融株",
+        "market_distortions": "⚠️ 市場の歪み・デリバティブ",
     }
 
     for key, title in sections.items():
@@ -338,14 +840,29 @@ def format_for_prompt(data):
             lines.append(f"\n{title}")
             for name, val in section_data.items():
                 if name.startswith("_"):
-                    lines.append(f"  {name}: {val}")
+                    # シグナル情報はそのまま表示
+                    if isinstance(val, dict):
+                        for sk, sv in val.items():
+                            lines.append(f"  [{name}] {sk}: {sv}")
+                    else:
+                        lines.append(f"  {name}: {val}")
                 elif isinstance(val, dict):
                     if "price" in val:
                         chg = val.get('change_1m_pct', 0)
                         arrow = '↑' if chg > 0 else '↓' if chg < 0 else '→'
-                        lines.append(f"  {name}: {val['price']} ({arrow}{chg:+.2f}%)")
+                        # MA情報があれば追加
+                        ma_info = ""
+                        for mk, mv in val.items():
+                            if mk.startswith("vs_MA"):
+                                period = mk.replace("vs_MA", "").replace("_pct", "")
+                                ma_info += f" [MA{period}: {mv:+.1f}%]"
+                        lines.append(f"  {name}: {val['price']} ({arrow}{chg:+.2f}%){ma_info}")
                     elif "value" in val:
-                        lines.append(f"  {name}: {val['value']}")
+                        extra = ""
+                        for ek, ev in val.items():
+                            if ek != "value":
+                                extra += f" ({ek}: {ev})"
+                        lines.append(f"  {name}: {val['value']}{extra}")
                     else:
                         lines.append(f"  {name}: {val}")
                 else:
@@ -361,6 +878,10 @@ def format_for_prompt(data):
 
     return "\n".join(lines)
 
+
+# ============================================================
+# ポートフォリオ関連（変更なし）
+# ============================================================
 
 def parse_portfolio_csv(uploaded_file):
     """IB証券CSVからポートフォリオデータを解析"""
