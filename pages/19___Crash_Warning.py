@@ -435,26 +435,90 @@ def signal_7_dollar_squeeze():
     }
 
 
+def signal_8_private_credit():
+    """
+    シグナル8: プライベートクレジット危機
+    ━━━━━━━━━━━━━━━━━━━━━━━━
+    2026年の最大リスク候補。市場規模3兆ドル、不透明、時価評価されない。
+    Blue Owl償還制限、Blackstone償還急増、BlackRockの突然の全額減損 — 
+    2007年のBear Stearns→BNPパリバの流れと酷似。
+    BIZD（BDC ETF）が上場版プライベートクレジットの健全度を映す鏡。
+    """
+    bizd = get_data("BIZD")  # VanEck BDC Income ETF
+    spy = get_data("SPY")
+    arcc = get_data("ARCC")  # Ares Capital（最大手BDC）
+
+    if bizd is None or spy is None:
+        return {"status": "ERROR", "message": "データ取得失敗"}
+
+    lookback = min(21, len(bizd) - 1)
+    bizd_ret = ((float(bizd["Close"].iloc[-1]) / float(bizd["Close"].iloc[-lookback - 1])) - 1) * 100
+    spy_ret = ((float(spy["Close"].iloc[-1]) / float(spy["Close"].iloc[-lookback - 1])) - 1) * 100
+    bizd_vs_spy = bizd_ret - spy_ret
+
+    # 3ヶ月リターン
+    lookback_3m = min(63, len(bizd) - 1)
+    bizd_ret_3m = ((float(bizd["Close"].iloc[-1]) / float(bizd["Close"].iloc[-lookback_3m - 1])) - 1) * 100
+
+    # ARCC（最大手BDC）の動き
+    arcc_ret = 0
+    if arcc is not None:
+        arcc_lookback = min(21, len(arcc) - 1)
+        arcc_ret = ((float(arcc["Close"].iloc[-1]) / float(arcc["Close"].iloc[-arcc_lookback - 1])) - 1) * 100
+
+    # BIZDのボリューム急増（パニック売りの兆候）
+    bizd_vol_recent = float(bizd["Volume"].iloc[-5:].mean()) if "Volume" in bizd.columns else 0
+    bizd_vol_avg = float(bizd["Volume"].iloc[-60:-5].mean()) if "Volume" in bizd.columns and len(bizd) > 60 else bizd_vol_recent
+    vol_spike = (bizd_vol_recent / bizd_vol_avg - 1) * 100 if bizd_vol_avg > 0 else 0
+
+    # 判定
+    if bizd_vs_spy < -8 and bizd_ret_3m < -10:
+        level = "CRITICAL"
+        detail = f"プライベートクレジット崩壊の兆候。BIZD対SPY: {bizd_vs_spy:+.1f}%、3ヶ月: {bizd_ret_3m:+.1f}%。2007年Bear Stearns型パターン。"
+    elif bizd_vs_spy < -5 or (bizd_ret < -5 and arcc_ret < -5):
+        level = "WARNING"
+        detail = f"プライベートクレジットにストレス。BIZD対SPY: {bizd_vs_spy:+.1f}%、ARCC: {arcc_ret:+.1f}%"
+    elif bizd_vs_spy < -2 or vol_spike > 100:
+        level = "CAUTION"
+        detail = f"プライベートクレジットやや軟調。BIZD対SPY: {bizd_vs_spy:+.1f}%、出来高変化: {vol_spike:+.0f}%"
+    else:
+        level = "NORMAL"
+        detail = f"プライベートクレジット安定。BIZD対SPY: {bizd_vs_spy:+.1f}%"
+
+    return {
+        "status": level,
+        "detail": detail,
+        "values": {
+            "BIZD(BDC ETF) 1ヶ月": f"{bizd_ret:+.1f}%",
+            "BIZD 3ヶ月": f"{bizd_ret_3m:+.1f}%",
+            "ARCC(最大手BDC) 1ヶ月": f"{arcc_ret:+.1f}%",
+            "対S&P500": f"{bizd_vs_spy:+.1f}%",
+            "出来高変化": f"{vol_spike:+.0f}%",
+        },
+        "lesson": "2026年2月: Blue Owl償還制限、Blackstone償還急増、BlackRock全額減損。Jamie Dimonは「ゴキブリは1匹見つけたらもっといる」と警告。市場規模3兆ドル、不透明、時価評価なし — 2007年のサブプライムと構造的に同じ。"
+    }
+
+
 # ============================================================
 # 総合脅威レベル算出
 # ============================================================
 
 def calc_threat_level(signals):
-    """7つのシグナルから総合脅威レベルを算出"""
+    """8つのシグナルから総合脅威レベルを算出"""
     scores = {"CRITICAL": 3, "WARNING": 2, "CAUTION": 1, "NORMAL": 0, "ERROR": 0}
     total = sum(scores.get(s.get("status", "ERROR"), 0) for s in signals.values())
-    max_possible = 3 * 7  # 21
+    max_possible = 3 * 8  # 24
 
     critical_count = sum(1 for s in signals.values() if s.get("status") == "CRITICAL")
     warning_count = sum(1 for s in signals.values() if s.get("status") == "WARNING")
 
-    if critical_count >= 3 or total >= 15:
+    if critical_count >= 3 or total >= 17:
         return "DEFCON 1", "🔴 最大警戒", "即座にポジション縮小。現金80%以上。", total
-    elif critical_count >= 2 or total >= 11:
+    elif critical_count >= 2 or total >= 13:
         return "DEFCON 2", "🟠 高警戒", "ポジション大幅縮小。防御的資産へシフト。", total
-    elif critical_count >= 1 or total >= 8:
+    elif critical_count >= 1 or total >= 9:
         return "DEFCON 3", "🟡 警戒", "リスクポジション縮小検討。ストップロス厳格化。", total
-    elif warning_count >= 2 or total >= 5:
+    elif warning_count >= 2 or total >= 6:
         return "DEFCON 4", "🔵 注意", "監視強化。新規ポジション控えめに。", total
     else:
         return "DEFCON 5", "🟢 平常", "通常運転。ルーティン通り。", total
@@ -483,7 +547,7 @@ st.markdown("""
 # 実行ボタン
 if st.button("🚨 早期警戒スキャンを実行", type="primary", use_container_width=True):
 
-    with st.spinner("7つの警戒シグナルをスキャン中... (30-60秒)"):
+    with st.spinner("8つの警戒シグナルをスキャン中... (30-60秒)"):
 
         signals = {
             "信用スプレッド": signal_1_credit_spread(),
@@ -493,6 +557,7 @@ if st.button("🚨 早期警戒スキャンを実行", type="primary", use_conta
             "流動性カナリア": signal_5_liquidity_canary(),
             "商業用不動産": signal_6_cre_stress(),
             "ドルスクイーズ": signal_7_dollar_squeeze(),
+            "プライベートクレジット": signal_8_private_credit(),
         }
 
     # 総合脅威レベル
@@ -512,14 +577,14 @@ if st.button("🚨 早期警戒スキャンを実行", type="primary", use_conta
     <div style="background: {bg_color}; text-align: center; padding: 30px; border-radius: 16px; margin: 10px 0 20px 0;">
         <div style="font-size: 48px; font-weight: 800; color: white; font-family: monospace;">{defcon}</div>
         <div style="font-size: 24px; color: white; margin: 8px 0;">{label}</div>
-        <div style="font-size: 14px; color: rgba(255,255,255,0.8);">スコア: {score}/21</div>
+        <div style="font-size: 14px; color: rgba(255,255,255,0.8);">スコア: {score}/24</div>
         <div style="font-size: 16px; color: white; margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">{action}</div>
     </div>
     """, unsafe_allow_html=True)
 
     # シグナル一覧
     st.markdown("---")
-    st.subheader("📡 7つの早期警戒シグナル")
+    st.subheader("📡 8つの早期警戒シグナル")
 
     status_icons = {
         "CRITICAL": "🔴",
@@ -537,6 +602,7 @@ if st.button("🚨 早期警戒スキャンを実行", type="primary", use_conta
         "流動性カナリア": "🐤 流動性カナリア",
         "商業用不動産": "🏢 商業用不動産",
         "ドルスクイーズ": "💵 ドルスクイーズ",
+        "プライベートクレジット": "🕳 プライベートクレジット（2026年最大リスク）",
     }
 
     for name, result in signals.items():
@@ -565,13 +631,13 @@ if st.button("🚨 早期警戒スキャンを実行", type="primary", use_conta
     col_sum1, col_sum2, col_sum3 = st.columns(3)
     with col_sum1:
         critical_count = sum(1 for s in signals.values() if s.get("status") == "CRITICAL")
-        st.metric("🔴 CRITICAL", f"{critical_count}/7")
+        st.metric("🔴 CRITICAL", f"{critical_count}/8")
     with col_sum2:
         warning_count = sum(1 for s in signals.values() if s.get("status") == "WARNING")
-        st.metric("🟠 WARNING", f"{warning_count}/7")
+        st.metric("🟠 WARNING", f"{warning_count}/8")
     with col_sum3:
         normal_count = sum(1 for s in signals.values() if s.get("status") == "NORMAL")
-        st.metric("🟢 NORMAL", f"{normal_count}/7")
+        st.metric("🟢 NORMAL", f"{normal_count}/8")
 
     st.caption(f"スキャン完了: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -618,10 +684,10 @@ else:
 
     > **「株価を見るな。信用市場を見ろ。」** — 2008年の最大の教訓
 
-    7つのシグナルは、2008年の金融危機で**実際に機能した**指標だけを厳選しています。
+    8つのシグナルは、過去の金融危機で**実際に機能した**指標を厳選しています。
 
-    | # | シグナル | 2008年で機能した理由 |
-    |---|---------|-------------------|
+    | # | シグナル | なぜ機能するか |
+    |---|---------|--------------|
     | 1 | 💳 信用スプレッド | 株式市場の4ヶ月前に警告を発した |
     | 2 | 🏦 銀行ストレス | 銀行は自分の帳簿の中身を知っている |
     | 3 | 📈 イールドカーブ | 逆イールドの「解消」が景気後退の直前シグナル |
@@ -629,6 +695,7 @@ else:
     | 5 | 🐤 流動性カナリア | 最もリスクの高い資産が最初に死ぬ |
     | 6 | 🏢 商業用不動産 | 次の危機の震源地候補 |
     | 7 | 💵 ドルスクイーズ | 全ての危機でドルは急騰した |
+    | 8 | 🕳 プライベートクレジット | **2026年最大リスク。** 3兆ドル、不透明、時価評価なし。Blue Owl/Blackstone/BlackRockで問題連発中 |
 
     **DEFCON 1-5** の脅威レベルで、「今どれくらい危険か」を5秒で判断できます。
     """)
@@ -644,7 +711,7 @@ with st.sidebar:
     - DEFCON 2: 週3回
     - DEFCON 1: 毎日
     
-    **7つのシグナル:**
+    **8つのシグナル:**
     1. 💳 信用スプレッド
     2. 🏦 銀行ストレス
     3. 📈 イールドカーブ
@@ -652,7 +719,8 @@ with st.sidebar:
     5. 🐤 流動性カナリア
     6. 🏢 商業用不動産
     7. 💵 ドルスクイーズ
+    8. 🕳 プライベートクレジット
     """)
     st.markdown("---")
-    st.caption("設計原則: 2008年で機能した指標のみ")
+    st.caption("設計原則: 過去の危機で機能した指標 + 2026年最大リスク")
     st.caption("株価を見るな。信用市場を見ろ。")
