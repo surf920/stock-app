@@ -1,14 +1,13 @@
-.venv/
-__pycache__/
-*.pyc
-.DS_Store
 
+__pycache__/
+.DS_Store
+.env
+.streamlit/secrets.toml
+.venv/
+*.csv
+*.env
+*.pyc
+*.xlsx.env
 # ↓ ここから下を追加してください
 # ポートフォリオの個人データを除外
-*.csv
-*.xlsx.env
-*.env
-.env
 streamlit.log
-.streamlit/secrets.toml
-.streamlit/secrets.toml

@@ -1,6 +1,8 @@
 import streamlit as st
 import json
 import os
+import base64
+import requests
 from datetime import datetime, timedelta
 import pandas as pd
 
@@ -33,12 +35,65 @@ st.markdown("""
 
 
 # ============================================================
-# 日記データの読み書き
+# 日記データの読み書き（GitHub API永続化）
 # ============================================================
 DIARY_FILE = "diary_data.json"
 
+def _get_github_config():
+    """GitHub設定を取得"""
+    try:
+        token = st.secrets["github"]["token"]
+        repo = st.secrets["github"]["repo"]
+        return token, repo
+    except Exception:
+        return None, None
+
+def _github_get_file(token, repo, path):
+    """GitHubからファイルを取得（内容とsha）"""
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    r = requests.get(url, headers=headers, timeout=15)
+    if r.status_code == 200:
+        data = r.json()
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        return content, data["sha"]
+    return None, None
+
+def _github_put_file(token, repo, path, content_str, sha=None):
+    """GitHubにファイルを書き込み（create or update）"""
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    encoded = base64.b64encode(content_str.encode("utf-8")).decode("utf-8")
+    body = {
+        "message": f"Update diary {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "content": encoded,
+    }
+    if sha:
+        body["sha"] = sha
+    r = requests.put(url, headers=headers, json=body, timeout=15)
+    return r.status_code in (200, 201)
+
 def load_diary():
-    """日記データを読み込み"""
+    """日記データを読み込み（GitHub優先、ローカルフォールバック）"""
+    token, repo = _get_github_config()
+    if token and repo:
+        try:
+            content, sha = _github_get_file(token, repo, DIARY_FILE)
+            if content:
+                data = json.loads(content)
+                # shaをsession_stateに保存（更新時に必要）
+                st.session_state["_diary_sha"] = sha
+                return data
+        except Exception as e:
+            st.warning(f"GitHub読み込みエラー: {e}（ローカルにフォールバック）")
+
+    # ローカルフォールバック
     if os.path.exists(DIARY_FILE):
         try:
             with open(DIARY_FILE, "r", encoding="utf-8") as f:
@@ -48,7 +103,28 @@ def load_diary():
     return {}
 
 def save_diary(data):
-    """日記データを保存"""
+    """日記データを保存（GitHub優先、ローカルフォールバック）"""
+    content_str = json.dumps(data, ensure_ascii=False, indent=2)
+
+    token, repo = _get_github_config()
+    if token and repo:
+        try:
+            sha = st.session_state.get("_diary_sha")
+            # shaがない場合は現在のファイルを取得
+            if not sha:
+                _, sha = _github_get_file(token, repo, DIARY_FILE)
+            success = _github_put_file(token, repo, DIARY_FILE, content_str, sha)
+            if success:
+                # 新しいshaを取得して更新
+                _, new_sha = _github_get_file(token, repo, DIARY_FILE)
+                st.session_state["_diary_sha"] = new_sha
+                return
+            else:
+                st.warning("GitHub保存失敗。ローカルに保存します。")
+        except Exception as e:
+            st.warning(f"GitHub保存エラー: {e}（ローカルに保存）")
+
+    # ローカルフォールバック
     try:
         with open(DIARY_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -242,26 +318,33 @@ with tab_diary:
     diary_data = load_diary()
 
     # 日付選択
-    diary_date = st.date_input("📅 日付", value=datetime.now().date(), key="diary_date")
-    date_key = diary_date.strftime("%Y-%m-%d")
+    col_date_sel, col_status = st.columns([2, 1])
+    with col_date_sel:
+        selected_date = st.date_input("📅 日付", value=datetime.now().date(), key="diary_date")
+        date_key = selected_date.strftime("%Y-%m-%d")
 
-    # 既存データがあればロード
+    with col_status:
+        if date_key in diary_data:
+            st.success(f"✅ {date_key} の記録あり")
+        else:
+            st.info(f"📝 {date_key} は未記録")
+
+    # 既存データがあれば読み込み
     existing = diary_data.get(date_key, {})
 
-    st.markdown("---")
-
+    # 入力フォーム
     col_j1, col_j2 = st.columns(2)
 
     with col_j1:
         outlook = st.selectbox(
-            "🧭 今日のマーケット目線",
-            ["", "強気（リスクオン）", "やや強気", "中立・様子見", "やや弱気", "弱気（リスクオフ）"],
-            index=["", "強気（リスクオン）", "やや強気", "中立・様子見", "やや弱気", "弱気（リスクオフ）"].index(existing.get("outlook", "")),
+            "📈 マーケット目線",
+            ["強気（リスクオン）", "やや強気", "中立・様子見", "やや弱気", "弱気（リスクオフ）"],
+            index=["強気（リスクオン）", "やや強気", "中立・様子見", "やや弱気", "弱気（リスクオフ）"].index(existing.get("outlook", "中立・様子見")),
             key="outlook"
         )
 
         decision = st.text_area(
-            "⚡ 今日の判断（何をした／何をしなかった）",
+            "⚡ 今日の判断（何をした / 何をしなかった）",
             value=existing.get("decision", ""),
             height=100,
             placeholder="例: 日本株のポジションを20%落とした / 何もせず現金維持",
@@ -345,7 +428,7 @@ with tab_diary:
             }
             diary_data[date_key] = entry
             save_diary(diary_data)
-            st.success(f"✅ {date_key} の日記を保存しました")
+            st.success(f"✅ {date_key} の日記を保存しました（GitHub永続化）")
             st.rerun()
 
     with col_clear:
@@ -506,5 +589,11 @@ with st.sidebar:
     """)
 
     st.markdown("---")
+    # GitHub接続状態表示
+    token, repo = _get_github_config()
+    if token:
+        st.caption("🟢 GitHub永続化: 有効")
+    else:
+        st.caption("🟡 GitHub未接続: ローカル保存のみ")
     st.caption(f"📊 日記データ: {len(load_diary())}件保存中")
     st.caption("💡 定期的にCSV出力でバックアップ推奨")
