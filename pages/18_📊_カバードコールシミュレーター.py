@@ -418,7 +418,7 @@ if uploaded_file:
         # Chart: Monthly income by symbol
         income_by_symbol = combined.groupby('symbol').apply(
             lambda x: x.sort_values('annualized_return', ascending=False).iloc[0]
-        )[['symbol', 'monthly_income', 'annualized_return', 'otm_pct']].reset_index(drop=True)
+        )[['monthly_income', 'annualized_return', 'otm_pct']].reset_index()
 
         fig = go.Figure()
         fig.add_trace(go.Bar(
