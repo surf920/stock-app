@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from scipy.optimize import minimize
 import json
 import io
+import base64
+import requests
 
 st.set_page_config(page_title="コア・サテライト管理", page_icon="🏛", layout="wide")
 
@@ -213,6 +215,141 @@ def call_claude_api(prompt, system_prompt=None):
             return f"API呼び出しエラー: {e}"
 
 
+# ===== リバランス提案 & 履歴 =====
+def get_next_rebalance_date(today=None):
+    """次の四半期リバランス日（1/4/7/10月の第1営業日）を返す"""
+    if today is None:
+        today = datetime.now().date()
+    year = today.year
+    quarter_months = [1, 4, 7, 10]
+    for m in quarter_months:
+        candidate = datetime(year, m, 1).date()
+        if candidate > today:
+            return candidate
+    return datetime(year + 1, 1, 1).date()
+
+
+def generate_order_list(rebalance_data, current_prices):
+    """リバランスデータから発注リストをテキスト形式で生成"""
+    sell_orders = []
+    buy_orders = []
+
+    for row in rebalance_data:
+        ticker = row["ticker"]
+        shares = row["trade_shares"]
+        if shares == 0:
+            continue
+        px = current_prices.get(ticker, 0)
+        total = abs(shares * px)
+        if shares < 0:
+            sell_orders.append(
+                f"SELL  {ticker:5s}  {abs(shares):5d} shares  @ ~${px:.2f}  (≈${total:,.0f})"
+            )
+        else:
+            buy_orders.append(
+                f"BUY   {ticker:5s}  {shares:5d} shares  @ ~${px:.2f}  (≈${total:,.0f})"
+            )
+
+    lines = [f"# リバランス発注リスト  {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+    lines.append("")
+    if sell_orders:
+        lines.append("## 売却注文")
+        lines.extend(sell_orders)
+        lines.append("")
+    if buy_orders:
+        lines.append("## 購入注文")
+        lines.extend(buy_orders)
+        lines.append("")
+    if not sell_orders and not buy_orders:
+        lines.append("# 取引不要（全資産が目標±5%以内）")
+
+    return "\n".join(lines)
+
+
+def get_github_config():
+    """GitHub設定を取得"""
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        repo = st.secrets.get("GITHUB_REPO", "surf920/stock-app")
+        return token, repo
+    except Exception:
+        return "", "surf920/stock-app"
+
+
+def load_rebalance_history():
+    """GitHubからリバランス履歴を取得"""
+    token, repo = get_github_config()
+    if not token:
+        return []
+
+    url = f"https://api.github.com/repos/{repo}/contents/data/rebalance_history.json"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        data = resp.json()
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        return json.loads(content)
+    except Exception as e:
+        st.warning(f"履歴の読み込みに失敗: {e}")
+        return []
+
+
+def save_rebalance_snapshot(snapshot):
+    """GitHubにリバランススナップショットを保存"""
+    token, repo = get_github_config()
+    if not token:
+        return False, "GITHUB_TOKENが設定されていません"
+
+    url = f"https://api.github.com/repos/{repo}/contents/data/rebalance_history.json"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    # 既存履歴を取得
+    history = []
+    sha = None
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            sha = data["sha"]
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            history = json.loads(content)
+    except Exception:
+        pass
+
+    # 新スナップショットを追加
+    history.append(snapshot)
+
+    # 最新50件のみ保持
+    history = history[-50:]
+
+    new_content = json.dumps(history, indent=2, ensure_ascii=False)
+    encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+
+    payload = {
+        "message": f"Rebalance snapshot {snapshot.get('date', '')}",
+        "content": encoded,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        resp = requests.put(url, headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
+        return True, "保存成功"
+    except Exception as e:
+        return False, f"保存失敗: {e}"
+
+
 # ===== メイン UI =====
 st.title("🏛 コア・サテライト ポートフォリオ管理")
 st.caption("リスクパリティ・コア + アクティブ・サテライト")
@@ -369,6 +506,24 @@ with tab1:
 with tab2:
     st.subheader("⚖️ リバランス計算機")
 
+    # 次回リバランス日の表示
+    next_date = get_next_rebalance_date()
+    today = datetime.now().date()
+    days_until = (next_date - today).days
+
+    col_d1, col_d2, col_d3 = st.columns(3)
+    with col_d1:
+        st.metric("今日", today.strftime("%Y-%m-%d"))
+    with col_d2:
+        st.metric("次回リバランス予定", next_date.strftime("%Y-%m-%d"))
+    with col_d3:
+        if days_until <= 7:
+            st.metric("残り日数", f"{days_until}日", delta="まもなく実施", delta_color="normal")
+        else:
+            st.metric("残り日数", f"{days_until}日")
+
+    st.markdown("---")
+
     input_method = st.radio(
         "ポジション入力方法",
         ["手動入力", "IB Flex CSVアップロード"],
@@ -451,6 +606,7 @@ with tab2:
 
             # リスクパリティ目標でリバランス計算
             rebalance_data = []
+            raw_trades = []
             needs_rebalance = False
 
             for ticker, info in CORE_ETFS.items():
@@ -466,6 +622,18 @@ with tab2:
 
                 if abs(deviation) > REBALANCE_BAND:
                     needs_rebalance = True
+
+                raw_trades.append(
+                    {
+                        "ticker": ticker,
+                        "current_val": current_val,
+                        "current_pct": current_pct,
+                        "target_pct": target_pct,
+                        "deviation": deviation,
+                        "trade_val": trade_val,
+                        "trade_shares": trade_shares,
+                    }
+                )
 
                 rebalance_data.append(
                     {
@@ -530,6 +698,82 @@ with tab2:
                 showlegend=False,
             )
             st.plotly_chart(fig_dev, use_container_width=True)
+
+            # ===== 発注リスト出力 =====
+            st.markdown("---")
+            st.subheader("📋 発注リスト（コピー用）")
+
+            order_text = generate_order_list(raw_trades, current_px)
+            st.code(order_text, language="text")
+
+            col_save1, col_save2 = st.columns([1, 3])
+            with col_save1:
+                save_clicked = st.button(
+                    "💾 履歴に保存",
+                    type="primary",
+                    disabled=not needs_rebalance,
+                )
+            with col_save2:
+                if not needs_rebalance:
+                    st.caption("リバランス不要のため保存は不要です")
+
+            if save_clicked:
+                snapshot = {
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "total_portfolio": total_portfolio,
+                    "core_total": core_total,
+                    "satellite_value": satellite_value,
+                    "trades": raw_trades,
+                    "order_text": order_text,
+                    "needs_rebalance": needs_rebalance,
+                }
+                with st.spinner("GitHubに保存中..."):
+                    success, msg = save_rebalance_snapshot(snapshot)
+                if success:
+                    st.success(f"✅ {msg}")
+                else:
+                    st.error(f"❌ {msg}")
+
+    # ===== リバランス履歴 =====
+    st.markdown("---")
+    with st.expander("📜 過去のリバランス履歴", expanded=False):
+        with st.spinner("履歴を取得中..."):
+            history = load_rebalance_history()
+
+        if not history:
+            st.info("まだ履歴がありません。リバランス実施時に保存してください。")
+        else:
+            st.caption(f"直近{len(history)}件を表示")
+
+            history_rows = []
+            for h in reversed(history):
+                sells = sum(
+                    1 for t in h.get("trades", []) if t.get("trade_shares", 0) < 0
+                )
+                buys = sum(
+                    1 for t in h.get("trades", []) if t.get("trade_shares", 0) > 0
+                )
+                history_rows.append(
+                    {
+                        "日付": h.get("date", "—"),
+                        "総資産": f"${h.get('total_portfolio', 0):,.0f}",
+                        "コア": f"${h.get('core_total', 0):,.0f}",
+                        "売却銘柄数": sells,
+                        "購入銘柄数": buys,
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(history_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # 最新の履歴詳細
+            if len(history) > 0:
+                latest = history[-1]
+                st.markdown("**最新リバランスの発注内容:**")
+                st.code(latest.get("order_text", "—"), language="text")
 
 
 # ===== Tab 3: サテライト状況 =====
