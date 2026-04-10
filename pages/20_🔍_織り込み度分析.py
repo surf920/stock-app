@@ -56,8 +56,7 @@ def yf_with_retry(func, max_retries=4, base_delay=2):
 def get_stock_data(ticker_symbol, period="2y"):
     """株価データ取得"""
     def _fetch():
-        session = make_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         hist = ticker.history(period=period)
         if hist.empty:
             return None, None
@@ -80,8 +79,7 @@ def get_stock_data(ticker_symbol, period="2y"):
 def get_earnings_dates(ticker_symbol):
     """決算日取得"""
     def _fetch():
-        session = make_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         return ticker.earnings_dates
 
     result, err = yf_with_retry(_fetch)
@@ -94,8 +92,7 @@ def get_earnings_dates(ticker_symbol):
 def get_options_expirations(ticker_symbol):
     """オプション満期リスト取得"""
     def _fetch():
-        session = make_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         return ticker.options
 
     result, err = yf_with_retry(_fetch)
@@ -107,8 +104,7 @@ def get_options_expirations(ticker_symbol):
 def get_options_chain_data(ticker_symbol, expiration):
     """オプションチェーン取得"""
     def _fetch():
-        session = make_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         return ticker.option_chain(expiration)
 
     result, err = yf_with_retry(_fetch)
