@@ -15,6 +15,11 @@ MAX_TOKENS = 4000
 
 # === Streamlit secrets から API キーを取得 ===
 ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+HEADERS = {
+    "x-api-key": ANTHROPIC_API_KEY,
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+}
 
 # === ページ設定 ===
 st.set_page_config(page_title="仮説破壊エンジン", page_icon="🔨", layout="wide")
@@ -60,17 +65,12 @@ if st.button("🔨 仮説を破壊する", type="primary", disabled=not hypothes
 
 各項目は、ユーザーが思考を深めるのに十分な具体性と深さを持たせてください。
 """
-        headers = {
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
         payload = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
             "messages": [{"role": "user", "content": prompt}],
         }
-        result, error = call_anthropic_api(headers, payload)
+        result, error = call_anthropic_api(HEADERS, payload)
         if error:
             st.error(f"エラー: {error}")
         else:
@@ -147,7 +147,7 @@ if st.session_state.challenges:
                     "max_tokens": MAX_TOKENS,
                     "messages": [{"role": "user", "content": judge_prompt}],
                 }
-                result, error = call_anthropic_api(headers, payload)
+                result, error = call_anthropic_api(HEADERS, payload)
                 if error:
                     st.error(f"判定エラー: {error}")
                 else:
