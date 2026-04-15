@@ -8,10 +8,12 @@ Hiさん自身が反論に答えることで、仮説の強度を確認する。
 import streamlit as st
 import json
 from api_helper import call_anthropic_api
+from datetime import datetime
 
 # === モデル設定(将来 api_helper.py に集中管理する) ===
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 4000
+TODAY = datetime.now().strftime("%Y年%m月%d日")
 
 # === Streamlit secrets から API キーを取得 ===
 ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
@@ -45,10 +47,13 @@ hypothesis = st.text_area(
 
 if st.button("🔨 仮説を破壊する", type="primary", disabled=not hypothesis.strip()):
     with st.spinner("Claude Opus が反証を生成中..."):
-        prompt = f"""あなたは、優秀な投資家の壁打ち相手として、ユーザーの投資仮説を徹底的に攻撃する役割です。
-甘やかさず、最強の反証者として振る舞ってください。
+        prompt = f"""【今日の日付: {TODAY}】
 
+あなたは、優秀な投資家の壁打ち相手として、ユーザーの投資仮説を徹底的に攻撃する役割です。
+甘やかさず、最強の反証者として振る舞ってください。
+反証を生成する際は、必ず今日の日付を起点にして時系列を考えてください。
 ユーザーの仮説:
+
 「{hypothesis}」
 
 以下の6つの観点から、この仮説を攻撃する材料を生成してください。
@@ -123,8 +128,11 @@ if st.session_state.challenges:
                     f"【{title}】\nAIの反証: {st.session_state.challenges.get(key, '')}\nユーザーの回答: {st.session_state.user_responses.get(key, '')}"
                     for key, title in sections
                 )
-                judge_prompt = f"""あなたは、優秀な投資家の壁打ち相手です。
+                judge_prompt = f"""【今日の日付: {TODAY}】
+
+あなたは、優秀な投資家の壁打ち相手です。
 以下は、ユーザーが立てた投資仮説と、それに対するAIの反証、そしてユーザー自身の回答です。
+判定する際は、必ず今日の日付を起点にして時系列を考えてください。
 
 仮説:
 「{hypothesis}」
