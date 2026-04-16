@@ -42,15 +42,22 @@ def get_id_token() -> str:
     J-QuantsのAPI Keysページで発行したリフレッシュトークンを使用。
     リフレッシュトークンは7日間有効。切れたら再発行してSecretsを更新。
     """
-    refresh_token = st.secrets.get("JQUANTS_REFRESH_TOKEN", "")
+    refresh_token = st.secrets.get("JQUANTS_REFRESH_TOKEN", "").strip()
     if not refresh_token:
         raise RuntimeError("JQUANTS_REFRESH_TOKEN を Streamlit Secrets に設定してください")
 
+    # トークンをURLではなくクエリパラメータ経由で渡す (requestsが内部でエンコード)
     r = requests.post(
-        f"{JQUANTS_BASE}/token/auth_refresh?refreshtoken={refresh_token}",
+        f"{JQUANTS_BASE}/token/auth_refresh",
+        params={"refreshtoken": refresh_token},
         timeout=30,
     )
-    r.raise_for_status()
+    if r.status_code != 200:
+        # トークンが入るURLは絶対に例外に含めないよう、raise_for_status を使わず自前で
+        raise requests.HTTPError(
+            f"auth_refresh failed with status {r.status_code}",
+            response=r,
+        )
     return r.json()["idToken"]
 
 
@@ -335,11 +342,25 @@ if analyze_btn and code.strip():
             st.session_state.analysis_result = analyze(code.strip())
             st.session_state.analysis_code = code.strip()
         except requests.HTTPError as e:
-            st.error(f"J-Quants APIエラー: {e}. コードが正しいか、プランが対応しているか確認してください。")
+            # トークンがURLに含まれるため、URLは絶対に画面に出さない
+            status = e.response.status_code if e.response is not None else "不明"
+            if status == 400:
+                st.error("認証エラー (400): リフレッシュトークンが無効か期限切れの可能性があります。J-Quantsで再発行してSecretsを更新してください。")
+            elif status == 401:
+                st.error("認証エラー (401): トークンが認証されませんでした。")
+            elif status == 403:
+                st.error("権限エラー (403): プランで許可されていないデータへのアクセス、または無効な銘柄コードです。")
+            elif status == 404:
+                st.error("データなし (404): この銘柄コードのデータが見つかりません。")
+            elif status == 429:
+                st.error("レート制限 (429): APIリクエスト上限に達しました。しばらく待ってから再実行してください。")
+            else:
+                st.error(f"J-Quants APIエラー (HTTP {status})")
         except RuntimeError as e:
             st.error(str(e))
         except Exception as e:
-            st.error(f"予期せぬエラー: {e}")
+            # 例外メッセージにもトークンが含まれる可能性があるので、型名だけ出す
+            st.error(f"予期せぬエラー: {type(e).__name__}")
 
 # --- 結果表示 ---
 r = st.session_state.analysis_result
