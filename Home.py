@@ -5,8 +5,11 @@ import base64
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
+from core.auth import require_auth, add_logout_button
 
 st.set_page_config(page_title="Macro Intelligence HQ", page_icon="🏠", layout="wide")
+require_auth()
+add_logout_button()
 
 # --- スタイル ---
 st.markdown("""
