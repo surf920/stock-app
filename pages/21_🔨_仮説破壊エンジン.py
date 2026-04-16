@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 """
 機能1-A: 仮説破壊エンジン
 Hiさんが「次は◯◯が来る」と仮説を持ったとき、

@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 from api_helper import call_anthropic_api
 import streamlit as st
 import json

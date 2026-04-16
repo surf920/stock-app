@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 """
 🚨 早期警戒システム (Crash Early Warning)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

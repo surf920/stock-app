@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 """
 FOMC自動分析ページ
 1. FOMC声明文を自動取得（FRB公式サイト）

@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 import streamlit as st
 import pandas as pd
 import requests

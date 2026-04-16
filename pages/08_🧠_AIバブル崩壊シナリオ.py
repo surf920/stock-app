@@ -1,3 +1,6 @@
+from core.auth import require_auth
+require_auth()
+
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
