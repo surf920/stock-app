@@ -2,9 +2,15 @@ from core.auth import require_auth
 require_auth()
 
 """
-機能: 個別株分析 (Phase 1)
-証券コードを入力すると、J-Quants APIから財務・株価データを取得し、
+機能: 個別株分析 (Phase 1) - J-Quants V2 API 対応版
+証券コードを入力すると、J-Quants V2 APIから財務・株価データを取得し、
 投資判断に必要な10項目を1画面に表示する。
+
+J-Quants V2 API の特徴:
+- API Key 認証 (x-api-key ヘッダーで直接認証、トークン変換不要)
+- エンドポイントが /v2/ 配下に再編
+- カラム名が短縮形 (Open→O, Close→C, NetSales→Sales, OperatingProfit→OP など)
+- レスポンス形式が {"data": [...], "pagination_key": "..."} に統一
 
 Hi の投資手法に準拠した設計:
 - 構造的需要成長 × 逆張りタイミング × 1-3年保有
@@ -18,13 +24,13 @@ import requests
 from datetime import datetime, timedelta
 from typing import Optional
 
-# === J-Quants API 設定 ===
-JQUANTS_BASE = "https://api.jquants.com/v1"
+# === J-Quants V2 API 設定 ===
+JQUANTS_BASE = "https://api.jquants.com/v2"
 
 # === ページ設定 ===
 st.set_page_config(page_title="個別株分析", page_icon="📊", layout="wide")
 st.title("📊 個別株分析")
-st.caption("証券コードを入力 → J-Quantsから財務・株価を取得 → 判断に必要な10項目を一画面で")
+st.caption("証券コードを入力 → J-Quants V2 APIから財務・株価を取得 → 判断に必要な10項目を一画面で")
 
 # === セッション状態 ===
 if "analysis_result" not in st.session_state:
@@ -34,42 +40,52 @@ if "analysis_code" not in st.session_state:
 
 
 # ============================================================
-# J-Quants 認証
+# J-Quants V2 認証ヘッダー (API Key 方式)
 # ============================================================
-@st.cache_data(ttl=20 * 3600, show_spinner=False)
-def get_id_token() -> str:
-    """IDトークン取得 (20時間キャッシュ)
-    J-QuantsのAPI Keysページで発行したリフレッシュトークンを使用。
-    リフレッシュトークンは7日間有効。切れたら再発行してSecretsを更新。
-    """
-    refresh_token = st.secrets.get("JQUANTS_REFRESH_TOKEN", "").strip()
-    if not refresh_token:
-        raise RuntimeError("JQUANTS_REFRESH_TOKEN を Streamlit Secrets に設定してください")
-
-    # トークンをURLではなくクエリパラメータ経由で渡す (requestsが内部でエンコード)
-    r = requests.post(
-        f"{JQUANTS_BASE}/token/auth_refresh",
-        params={"refreshtoken": refresh_token},
-        timeout=30,
-    )
-    if r.status_code != 200:
-        # トークンが入るURLは絶対に例外に含めないよう、raise_for_status を使わず自前で
-        raise requests.HTTPError(
-            f"auth_refresh failed with status {r.status_code}",
-            response=r,
-        )
-    return r.json()["idToken"]
-
-
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {get_id_token()}"}
+    api_key = st.secrets.get("JQUANTS_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "JQUANTS_API_KEY が Streamlit Secrets に設定されていません。"
+            "J-QuantsダッシュボードのAPI KeysページでAPI Keyを発行し、"
+            "Streamlit CloudのSettings > Secrets に JQUANTS_API_KEY として設定してください。"
+        )
+    return {"x-api-key": api_key}
+
+
+def _safe_get(url: str, params: dict = None) -> dict:
+    """APIキーや URL を絶対にエラーに含めない安全なGETリクエスト"""
+    try:
+        r = requests.get(url, params=params, headers=_headers(), timeout=30)
+    except requests.RequestException:
+        raise RuntimeError("ネットワークエラー: J-Quants APIに接続できませんでした")
+
+    if r.status_code == 200:
+        return r.json()
+
+    # エラーハンドリング(トークンを絶対に含めない)
+    if r.status_code == 400:
+        raise RuntimeError("リクエストエラー (400): パラメータに問題があります。証券コードを確認してください。")
+    elif r.status_code == 401:
+        raise RuntimeError("認証エラー (401): API Keyが無効です。再発行してSecretsを更新してください。")
+    elif r.status_code == 403:
+        raise RuntimeError("権限エラー (403): このプランではアクセスできないデータです。")
+    elif r.status_code == 404:
+        raise RuntimeError("データなし (404): 指定された証券コードのデータが見つかりません。")
+    elif r.status_code == 429:
+        raise RuntimeError("レート制限 (429): APIリクエスト上限に達しました。しばらく待ってから再実行してください。")
+    else:
+        raise RuntimeError(f"J-Quants APIエラー (HTTP {r.status_code})")
 
 
 # ============================================================
-# データ取得 (銘柄ごとに1時間キャッシュ)
+# データ取得 (V2 エンドポイント、銘柄ごとに1時間キャッシュ)
 # ============================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_daily_prices(code: str, years: int = 5) -> pd.DataFrame:
+    """日次株価を取得 (V2: /v2/equities/bars/daily)
+    V2カラム名: Date, Code, O, H, L, C, Vo, Va, AdjO, AdjH, AdjL, AdjC, AdjVo, AdjFactor
+    """
     end = datetime.now()
     start = end - timedelta(days=years * 365 + 30)
     all_rows = []
@@ -78,10 +94,8 @@ def fetch_daily_prices(code: str, years: int = 5) -> pd.DataFrame:
         params = {"code": code, "from": start.strftime("%Y%m%d"), "to": end.strftime("%Y%m%d")}
         if pagination_key:
             params["pagination_key"] = pagination_key
-        r = requests.get(f"{JQUANTS_BASE}/prices/daily_quotes", params=params, headers=_headers(), timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        all_rows.extend(data.get("daily_quotes", []))
+        data = _safe_get(f"{JQUANTS_BASE}/equities/bars/daily", params=params)
+        all_rows.extend(data.get("data", []))
         pagination_key = data.get("pagination_key")
         if not pagination_key:
             break
@@ -93,26 +107,27 @@ def fetch_daily_prices(code: str, years: int = 5) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_statements(code: str) -> pd.DataFrame:
-    r = requests.get(f"{JQUANTS_BASE}/fins/statements", params={"code": code}, headers=_headers(), timeout=30)
-    r.raise_for_status()
-    df = pd.DataFrame(r.json().get("statements", []))
+def fetch_financial_summary(code: str) -> pd.DataFrame:
+    """財務サマリーを取得 (V2: /v2/fins/summary)
+    V2カラム名: DiscDate, Code, CurPerType, Sales, OP, NP, EPS, BPS, TA, Eq, EqAR,
+    CFO, CFI, CFF, AvgSh など (V1の NetSales → Sales, OperatingProfit → OP に短縮)
+    """
+    data = _safe_get(f"{JQUANTS_BASE}/fins/summary", params={"code": code})
+    df = pd.DataFrame(data.get("data", []))
     if not df.empty:
-        df["DisclosedDate"] = pd.to_datetime(df["DisclosedDate"])
-        df = df.sort_values("DisclosedDate").reset_index(drop=True)
+        df["DiscDate"] = pd.to_datetime(df["DiscDate"])
+        df = df.sort_values("DiscDate").reset_index(drop=True)
     return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_margin(code: str) -> pd.DataFrame:
-    r = requests.get(
-        f"{JQUANTS_BASE}/markets/weekly_margin_interest",
-        params={"code": code},
-        headers=_headers(),
-        timeout=30,
-    )
-    r.raise_for_status()
-    df = pd.DataFrame(r.json().get("weekly_margin_interest", []))
+    """週次信用残を取得 (V2: /v2/markets/margin-interest)
+    V2カラム名: Date, Code, ShrtVol, LongVol, ShrtNegVol, LongNegVol,
+    ShrtStdVol, LongStdVol, IssType
+    """
+    data = _safe_get(f"{JQUANTS_BASE}/markets/margin-interest", params={"code": code})
+    df = pd.DataFrame(data.get("data", []))
     if not df.empty:
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date").reset_index(drop=True)
@@ -121,16 +136,17 @@ def fetch_margin(code: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_listed_info(code: str) -> dict:
-    r = requests.get(f"{JQUANTS_BASE}/listed/info", params={"code": code}, headers=_headers(), timeout=30)
-    r.raise_for_status()
-    info = r.json().get("info", [])
-    return info[0] if info else {}
+    """上場銘柄情報を取得 (V2: /v2/equities/master)"""
+    data = _safe_get(f"{JQUANTS_BASE}/equities/master", params={"code": code})
+    items = data.get("data", [])
+    return items[0] if items else {}
 
 
 # ============================================================
 # 計算 (10項目)
 # ============================================================
 def _f(x) -> Optional[float]:
+    """文字列/Noneを安全に float 変換"""
     try:
         return float(x) if x not in (None, "", "-") else None
     except (ValueError, TypeError):
@@ -140,34 +156,43 @@ def _f(x) -> Optional[float]:
 def calc_price_metrics(prices: pd.DataFrame) -> dict:
     if prices.empty:
         return {}
-    current = prices["Close"].iloc[-1]
-    high_52w = prices.tail(52 * 5)["High"].max()
+    # V2 カラム: C (Close), H (High)
+    close_col = "C" if "C" in prices.columns else "Close"
+    high_col = "H" if "H" in prices.columns else "High"
+    if close_col not in prices.columns:
+        return {}
+    current = prices[close_col].iloc[-1]
+    high_52w = prices.tail(52 * 5)[high_col].max() if high_col in prices.columns else None
     return {
         "current_price": round(current, 2),
-        "high_52w": round(high_52w, 2),
-        "high_52w_deviation": round((current / high_52w - 1) * 100, 2),
+        "high_52w": round(high_52w, 2) if high_52w else None,
+        "high_52w_deviation": round((current / high_52w - 1) * 100, 2) if high_52w else None,
     }
 
 
-def calc_valuation(prices: pd.DataFrame, statements: pd.DataFrame) -> dict:
-    """PER/PBR/PSRの5年レンジ内位置 (簡易版: 直近決算のEPS/BPS/SPSで近似)"""
-    if prices.empty or statements.empty:
+def calc_valuation(prices: pd.DataFrame, summary: pd.DataFrame) -> dict:
+    """PER/PBR/PSRの5年レンジ内位置 (V2カラム名対応)"""
+    if prices.empty or summary.empty:
         return {}
 
-    latest = statements.iloc[-1]
-    eps = _f(latest.get("EarningsPerShare"))
-    bps = _f(latest.get("BookValuePerShare"))
-    net_sales = _f(latest.get("NetSales"))
-    shares = _f(latest.get("AverageNumberOfShares"))
-    sps = (net_sales / shares) if (net_sales and shares) else None
+    latest = summary.iloc[-1]
+    eps = _f(latest.get("EPS"))
+    bps = _f(latest.get("BPS"))
+    sales = _f(latest.get("Sales"))
+    shares = _f(latest.get("AvgSh"))
+    sps = (sales / shares) if (sales and shares) else None
+
+    close_col = "C" if "C" in prices.columns else "Close"
+    if close_col not in prices.columns:
+        return {}
 
     p = prices.copy()
     if eps and eps > 0:
-        p["PER"] = p["Close"] / eps
+        p["PER"] = p[close_col] / eps
     if bps and bps > 0:
-        p["PBR"] = p["Close"] / bps
+        p["PBR"] = p[close_col] / bps
     if sps and sps > 0:
-        p["PSR"] = p["Close"] / sps
+        p["PSR"] = p[close_col] / sps
 
     def _pct(col: str):
         if col not in p.columns:
@@ -196,13 +221,15 @@ def calc_valuation(prices: pd.DataFrame, statements: pd.DataFrame) -> dict:
     }
 
 
-def calc_growth(statements: pd.DataFrame) -> dict:
-    if statements.empty:
+def calc_growth(summary: pd.DataFrame) -> dict:
+    """構造的需要成長の指標 (V2: Sales, OP, NP, Eq, TA, CFO, CFI, EqAR)"""
+    if summary.empty:
         return {}
 
-    annual = statements[statements["TypeOfCurrentPeriod"] == "FY"].copy() if "TypeOfCurrentPeriod" in statements.columns else statements.copy()
+    # 通期決算(FY)のみ抽出
+    annual = summary[summary["CurPerType"] == "FY"].copy() if "CurPerType" in summary.columns else summary.copy()
     if len(annual) < 2:
-        annual = statements.copy()
+        annual = summary.copy()
 
     def _tail(field: str, n: int = 5):
         if field not in annual.columns:
@@ -210,13 +237,13 @@ def calc_growth(statements: pd.DataFrame) -> dict:
         vals = [_f(v) for v in annual[field].tail(n).tolist()]
         return [v for v in vals if v is not None]
 
-    sales = _tail("NetSales")
-    op_profit = _tail("OperatingProfit")
-    net_income = _tail("Profit")
-    equity = _tail("Equity")
-    total_assets = _tail("TotalAssets")
-    op_cf = _tail("CashFlowsFromOperatingActivities")
-    inv_cf = _tail("CashFlowsFromInvestingActivities")
+    sales = _tail("Sales")
+    op_profit = _tail("OP")
+    net_income = _tail("NP")
+    equity = _tail("Eq")
+    total_assets = _tail("TA")
+    op_cf = _tail("CFO")
+    inv_cf = _tail("CFI")
 
     sales_cagr = None
     if len(sales) >= 2 and sales[0] > 0:
@@ -226,9 +253,15 @@ def calc_growth(statements: pd.DataFrame) -> dict:
     op_margins = [op / s * 100 for op, s in zip(op_profit, sales) if s > 0]
     roe = [ni / eq * 100 for ni, eq in zip(net_income, equity) if eq > 0]
 
-    equity_ratio = None
-    if equity and total_assets and total_assets[-1] > 0:
+    # V2は EqAR として自己資本比率が直接返る (小数形式、例: 0.284 = 28.4%)
+    # 念のため、EqAR があればそれを使い、なければ計算
+    latest_eq_ar = _f(annual.iloc[-1].get("EqAR")) if "EqAR" in annual.columns else None
+    if latest_eq_ar and latest_eq_ar < 2:  # 0-1の範囲ならパーセント変換
+        equity_ratio = latest_eq_ar * 100
+    elif equity and total_assets and total_assets[-1] > 0:
         equity_ratio = equity[-1] / total_assets[-1] * 100
+    else:
+        equity_ratio = None
 
     fcf = [o + i for o, i in zip(op_cf, inv_cf)]
 
@@ -245,16 +278,17 @@ def calc_growth(statements: pd.DataFrame) -> dict:
 
 
 def calc_margin_signal(margin: pd.DataFrame) -> dict:
+    """逆張りシグナル (V2カラム: LongVol 買残, ShrtVol 売残)"""
     if margin.empty:
         return {}
     latest = margin.iloc[-1]
-    long_bal = _f(latest.get("LongMarginTradeVolume"))
-    short_bal = _f(latest.get("ShortMarginTradeVolume"))
+    long_bal = _f(latest.get("LongVol"))
+    short_bal = _f(latest.get("ShrtVol"))
 
     year_ago = margin.tail(52)
     long_pct = None
-    if long_bal and not year_ago.empty:
-        vals = [_f(v) for v in year_ago["LongMarginTradeVolume"].tolist()]
+    if long_bal and not year_ago.empty and "LongVol" in year_ago.columns:
+        vals = [_f(v) for v in year_ago["LongVol"].tolist()]
         vals = [v for v in vals if v is not None]
         if vals:
             long_pct = sum(1 for v in vals if v <= long_bal) / len(vals) * 100
@@ -269,17 +303,22 @@ def calc_margin_signal(margin: pd.DataFrame) -> dict:
 def analyze(code: str) -> dict:
     info = fetch_listed_info(code)
     prices = fetch_daily_prices(code)
-    statements = fetch_statements(code)
+    summary = fetch_financial_summary(code)
     margin = fetch_margin(code)
+
+    # 企業情報: V2 の equities/master のカラム名は推測で複数試す
+    company_name = info.get("CompanyName") or info.get("CompanyNameFull") or info.get("Name") or "-"
+    sector = info.get("Sector17CodeName") or info.get("Sector33CodeName") or info.get("SectorName") or "-"
+    market = info.get("MarketCodeName") or info.get("Market") or "-"
 
     return {
         "code": code,
-        "company_name": info.get("CompanyName", "-"),
-        "sector": info.get("Sector17CodeName", "-"),
-        "market": info.get("MarketCodeName", "-"),
+        "company_name": company_name,
+        "sector": sector,
+        "market": market,
         **calc_price_metrics(prices),
-        **calc_valuation(prices, statements),
-        **calc_growth(statements),
+        **calc_valuation(prices, summary),
+        **calc_growth(summary),
         **calc_margin_signal(margin),
     }
 
@@ -304,7 +343,6 @@ def percentile_label(pct: Optional[float]) -> str:
 
 
 def render_bar(pct: Optional[float]):
-    """パーセンタイル表示用の色付きバー"""
     if pct is None:
         st.caption("データなし")
         return
@@ -341,25 +379,10 @@ if analyze_btn and code.strip():
         try:
             st.session_state.analysis_result = analyze(code.strip())
             st.session_state.analysis_code = code.strip()
-        except requests.HTTPError as e:
-            # トークンがURLに含まれるため、URLは絶対に画面に出さない
-            status = e.response.status_code if e.response is not None else "不明"
-            if status == 400:
-                st.error("認証エラー (400): リフレッシュトークンが無効か期限切れの可能性があります。J-Quantsで再発行してSecretsを更新してください。")
-            elif status == 401:
-                st.error("認証エラー (401): トークンが認証されませんでした。")
-            elif status == 403:
-                st.error("権限エラー (403): プランで許可されていないデータへのアクセス、または無効な銘柄コードです。")
-            elif status == 404:
-                st.error("データなし (404): この銘柄コードのデータが見つかりません。")
-            elif status == 429:
-                st.error("レート制限 (429): APIリクエスト上限に達しました。しばらく待ってから再実行してください。")
-            else:
-                st.error(f"J-Quants APIエラー (HTTP {status})")
         except RuntimeError as e:
             st.error(str(e))
         except Exception as e:
-            # 例外メッセージにもトークンが含まれる可能性があるので、型名だけ出す
+            # 例外メッセージにキーが含まれる可能性を排除するため型名のみ
             st.error(f"予期せぬエラー: {type(e).__name__}")
 
 # --- 結果表示 ---
@@ -367,14 +390,13 @@ r = st.session_state.analysis_result
 if r:
     st.divider()
 
-    # 企業情報ヘッダー
     st.subheader(f"{r.get('company_name')} ({r.get('code')})")
     st.caption(f"{r.get('sector')} / {r.get('market')}")
 
-    # 主要指標 4カラム
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("株価", f"¥{r.get('current_price', '-'):,}" if r.get('current_price') else "-")
+        cp = r.get("current_price")
+        st.metric("株価", f"¥{cp:,}" if cp else "-")
     with c2:
         dev = r.get("high_52w_deviation")
         st.metric("52週高値からの乖離", f"{dev}%" if dev is not None else "-",
@@ -386,7 +408,6 @@ if r:
 
     st.divider()
 
-    # ① 何合目か
     st.markdown("### ① 何合目か (5年レンジ内の位置)")
     for key, label in [("per", "PER"), ("pbr", "PBR"), ("psr", "PSR")]:
         cur = r.get(key)
@@ -405,9 +426,7 @@ if r:
 
     st.divider()
 
-    # ② 構造的需要成長 | ③ 健全性
     col_g, col_h = st.columns(2)
-
     with col_g:
         st.markdown("### ② 構造的需要成長")
         st.metric("売上CAGR 5年", f"{r.get('sales_cagr_5y', '-')}%" if r.get('sales_cagr_5y') else "-")
@@ -431,7 +450,6 @@ if r:
 
     st.divider()
 
-    # ⑤ 逆張りシグナル
     st.markdown("### ⑤ 逆張りタイミング")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -453,7 +471,6 @@ if r:
 
     st.divider()
 
-    # 未取得項目の注記
     with st.expander("📝 未取得項目 (手動入力が必要)"):
         st.markdown("""
         以下の2項目は J-Quants では取得できないため、自分で確認:
@@ -461,7 +478,6 @@ if r:
         - **⑩ アナリスト予想変化**: 代替として、会社予想の修正履歴を決算短信で確認
         """)
 
-    # 判断メモ
     st.markdown("### 🧠 あなたの判断メモ")
     st.caption("自動化すべきでない部分。ここを埋めることで銘柄への理解が深まる。")
 
@@ -476,7 +492,6 @@ if r:
         st.text_input("想定保有期間", key=f"{memo_key}_horizon", placeholder="例: 1-2年")
         st.text_input("エグジットシナリオ", key=f"{memo_key}_exit", placeholder="例: PER25倍超で段階利確")
 
-    # アクション
     st.write("")
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
