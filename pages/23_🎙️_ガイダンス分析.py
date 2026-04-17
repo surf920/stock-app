@@ -69,10 +69,10 @@ def extract_guidance_from_pdf(uploaded_file) -> str:
     start_idx = None
     end_idx = None
 
-    for i, line in enumerate(lines):
+   for i, line in enumerate(lines):
         if start_idx is None:
             for marker in start_markers:
-                if marker in line:
+                if marker in line and "…" not in line and "····" not in line and len(line) > 30:
                     start_idx = i
                     break
         elif end_idx is None:
