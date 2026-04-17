@@ -27,7 +27,7 @@ TODAY = datetime.now().strftime("%Y年%m月%d日")
 ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 HEADERS = {
     "x-api-key": ANTHROPIC_API_KEY,
-    "anthropic-version": "2023-06-01",
+    "anthropic-version": "2025-06-01",
     "content-type": "application/json",
 }
 
@@ -62,6 +62,7 @@ if st.button("🔨 仮説を破壊する", type="primary", disabled=not hypothes
 あなたは、優秀な投資家の壁打ち相手として、ユーザーの投資仮説を徹底的に攻撃する役割です。
 甘やかさず、最強の反証者として振る舞ってください。
 反証を生成する際は、必ず今日の日付を起点にして時系列を考えてください。
+仮説に関連する株価、為替、金利、経済指標などの数値は、必ずウェブ検索で最新のデータを確認してから使ってください。自分の記憶にあるデータは古い可能性があります。検索せずに市場データを断言しないでください。
 
 ユーザーの仮説:
 「{hypothesis}」
@@ -94,7 +95,7 @@ if st.button("🔨 仮説を破壊する", type="primary", disabled=not hypothes
             "tools": WEB_SEARCH_TOOL,
             "messages": [{"role": "user", "content": prompt}],
         }
-        st.write("DEBUG tools:", payload.get("tools"))
+        
         result, error = call_anthropic_api(HEADERS, payload)
         if error:
             st.error(f"エラー: {error}")
