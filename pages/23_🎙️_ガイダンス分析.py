@@ -145,7 +145,7 @@ with col_info2:
 # TDnet便利リンク
 code_only = "".join(c for c in company if c.isdigit())
 if code_only and len(code_only) == 4:
-    st.markdown(f"📎 [Google で {code_only} の決算短信を検索](https://www.google.com/search?q={code_only}+決算短信+filetype:pdf)")
+    st.markdown(f"📎 [Google で {code_only} の決算短信を検索](https://www.google.com/search?q={code_only}+決算短信)")
 
 st.divider()
 
