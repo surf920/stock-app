@@ -220,7 +220,7 @@ with col_info2:
 # TDnet 検索リンク
 code_only = "".join(c for c in company if c.isdigit())
 if code_only and len(code_only) == 4:
-    tdnet_url = f"https://www.release.tdnet.info/inbs/I_list_001_{code_only}.html"
+    tdnet_url = f"https://www.google.com/search?q={code_only}+決算短信+site:release.tdnet.info"
     st.markdown(f"📎 [TDnetで {code_only} の開示を検索する]({tdnet_url})")
     st.caption("↑ クリックして最新の決算短信PDFをダウンロード → 下のアップロード欄にドロップ")
 
