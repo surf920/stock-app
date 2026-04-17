@@ -188,16 +188,13 @@ if st.button("🎙️ ガイダンスを分析する", type="primary", disabled=
             "messages": [{"role": "user", "content": prompt}],
         }
 
-        result_text, error = call_anthropic_api(HEADERS, payload)
+       result, error = call_anthropic_api(HEADERS, payload)
         if error:
             st.error(f"エラー: {error}")
+        elif result and isinstance(result, dict):
+            st.session_state.guidance_result = result
         else:
-            parsed = parse_result(result_text)
-            if parsed:
-                st.session_state.guidance_result = parsed
-            else:
-                st.error("分析結果の解析に失敗しました。もう一度試してください。")
-                st.code(result_text)  # デバッグ用に生テキスト表示
+            st.error("分析結果の解析に失敗しました。もう一度試してください。")
 
 # --- 結果表示 ---
 g = st.session_state.guidance_result
