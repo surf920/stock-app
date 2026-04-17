@@ -20,6 +20,7 @@ from api_helper import call_anthropic_api
 # === モデル設定(将来 api_helper.py に集中管理する) ===
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 4000
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search"}]
 TODAY = datetime.now().strftime("%Y年%m月%d日")
 
 # === Streamlit secrets から API キーを取得 ===
@@ -90,8 +91,10 @@ if st.button("🔨 仮説を破壊する", type="primary", disabled=not hypothes
         payload = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
+            "tools": WEB_SEARCH_TOOL,
             "messages": [{"role": "user", "content": prompt}],
         }
+        st.write("DEBUG tools:", payload.get("tools"))
         result, error = call_anthropic_api(HEADERS, payload)
         if error:
             st.error(f"エラー: {error}")
@@ -181,6 +184,7 @@ next_actions は必ず配列形式で、5つの独立した具体的なアクシ
                 payload = {
                     "model": MODEL,
                     "max_tokens": MAX_TOKENS,
+                    "tools": WEB_SEARCH_TOOL,
                     "messages": [{"role": "user", "content": judge_prompt}],
                 }
                 result, error = call_anthropic_api(HEADERS, payload)
@@ -264,6 +268,7 @@ next_actions は必ず配列形式で、5つの独立した具体的なアクシ
                                 payload = {
                                     "model": MODEL,
                                     "max_tokens": MAX_TOKENS,
+                                    "tools": WEB_SEARCH_TOOL,
                                     "messages": [{"role": "user", "content": consult_prompt}],
                                 }
                                 result, error = call_anthropic_api(HEADERS, payload)
@@ -319,6 +324,7 @@ next_actions は必ず配列形式で、5つの独立した具体的なアクシ
                                     payload = {
                                         "model": MODEL,
                                         "max_tokens": MAX_TOKENS,
+                                        "tools": WEB_SEARCH_TOOL,
                                         "messages": [{"role": "user", "content": execute_prompt}],
                                     }
                                     result, error = call_anthropic_api(HEADERS, payload)
@@ -371,6 +377,7 @@ next_actions は必ず配列形式で、5つの独立した具体的なアクシ
                                 payload = {
                                     "model": MODEL,
                                     "max_tokens": MAX_TOKENS,
+                                    "tools": WEB_SEARCH_TOOL,
                                     "messages": [{"role": "user", "content": modify_prompt}],
                                 }
                                 result, error = call_anthropic_api(HEADERS, payload)
