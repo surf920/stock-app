@@ -20,14 +20,14 @@ from api_helper import call_anthropic_api
 # === モデル設定(将来 api_helper.py に集中管理する) ===
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 4000
-WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search"}]
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
 TODAY = datetime.now().strftime("%Y年%m月%d日")
 
 # === Streamlit secrets から API キーを取得 ===
 ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 HEADERS = {
     "x-api-key": ANTHROPIC_API_KEY,
-    "anthropic-version": "2025-06-01",
+    "anthropic-version": "2023-06-01",
     "content-type": "application/json",
 }
 
