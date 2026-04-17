@@ -44,6 +44,7 @@ if "last_prev_pdf_name" not in st.session_state:
 
 
 def extract_guidance_from_pdf(uploaded_file) -> str:
+    """PDFから全テキストを抽出。ガイダンスセクションの特定はClaudeに任せる。"""
     if not PDF_AVAILABLE:
         return ""
     full_text = ""
@@ -52,41 +53,7 @@ def extract_guidance_from_pdf(uploaded_file) -> str:
             page_text = page.extract_text()
             if page_text:
                 full_text += page_text + "\n"
-    if not full_text:
-        return ""
-
-    start_markers = [
-        "今後の見通し", "次期の見通し", "将来の見通し", "業績の見通し",
-        "業績見通し", "来期の見通し", "通期の見通し", "連結業績予想", "今後の経営方針",
-    ]
-    end_markers = [
-        "利益配分に関する", "配当の状況", "配当に関する", "会計基準の選択",
-        "（参考）", "２．会計基準", "2．会計基準", "３．連結財務諸表",
-        "3．連結財務諸表", "連結貸借対照表", "連結損益計算書",
-    ]
-
-    lines = full_text.split("\n")
-    start_idx = None
-    end_idx = None
-
-    for i, line in enumerate(lines):
-        if start_idx is None:
-            for marker in start_markers:
-                if marker in line and "…" not in line and "····" not in line and len(line.strip()) > 30:
-                    start_idx = i
-                    break
-        elif end_idx is None:
-            for marker in end_markers:
-                if marker in line:
-                    end_idx = i
-                    break
-
-    if start_idx is not None:
-        if end_idx is None:
-            end_idx = min(start_idx + 50, len(lines))
-        return "\n".join(lines[start_idx:end_idx]).strip()
-
-    return full_text[:3000]
+    return full_text.strip()
 
 
 ANALYSIS_PROMPT = """【今日の日付: {today}】
@@ -99,7 +66,10 @@ ANALYSIS_PROMPT = """【今日の日付: {today}】
 銘柄: {company}
 決算期: {period}
 
-## ガイダンステキスト
+## 決算短信テキスト（全文または抜粋）
+以下は決算短信の全文または一部です。この中から「今後の見通し」「業績予想」「経営方針」に関するセクションを特定し、
+そのセクションの言語・トーンを分析してください。目次や財務諸表の数字部分は無視してください。
+
 {guidance_text}
 
 {prev_section}
