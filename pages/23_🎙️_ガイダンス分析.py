@@ -2,11 +2,8 @@ from core.auth import require_auth
 require_auth()
 
 """
-機能: 決算ガイダンス分析エンジン v3
-PDF自動抽出対応版
-- 決算短信PDFをアップロードすると「今後の見通し」セクションを自動抽出
-- TDnet検索URLをワンクリックで開ける
-- 手動テキスト入力も引き続き可能
+決算ガイダンス分析エンジン v4
+PDF自動抽出 + テキストエリア表示修正版
 """
 
 import streamlit as st
@@ -40,52 +37,32 @@ if "extracted_text" not in st.session_state:
     st.session_state.extracted_text = ""
 if "extracted_prev_text" not in st.session_state:
     st.session_state.extracted_prev_text = ""
+if "last_pdf_name" not in st.session_state:
+    st.session_state.last_pdf_name = ""
+if "last_prev_pdf_name" not in st.session_state:
+    st.session_state.last_prev_pdf_name = ""
 
 
-# ============================================================
-# PDF テキスト抽出
-# ============================================================
 def extract_guidance_from_pdf(uploaded_file) -> str:
-    """決算短信PDFから「今後の見通し」セクションを抽出する"""
     if not PDF_AVAILABLE:
         return ""
-
     full_text = ""
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text()
             if page_text:
                 full_text += page_text + "\n"
-
     if not full_text:
         return ""
 
-    # 「今後の見通し」セクションの開始と終了を検出
-    # 決算短信の典型的なセクション構造に基づく
     start_markers = [
-        "今後の見通し",
-        "次期の見通し",
-        "将来の見通し",
-        "業績の見通し",
-        "業績見通し",
-        "来期の見通し",
-        "通期の見通し",
-        "連結業績予想",
-        "今後の経営方針",
+        "今後の見通し", "次期の見通し", "将来の見通し", "業績の見通し",
+        "業績見通し", "来期の見通し", "通期の見通し", "連結業績予想", "今後の経営方針",
     ]
-
     end_markers = [
-        "利益配分に関する",
-        "配当の状況",
-        "配当に関する",
-        "会計基準の選択",
-        "（参考）",
-        "２．会計基準",
-        "2．会計基準",
-        "３．連結財務諸表",
-        "3．連結財務諸表",
-        "連結貸借対照表",
-        "連結損益計算書",
+        "利益配分に関する", "配当の状況", "配当に関する", "会計基準の選択",
+        "（参考）", "２．会計基準", "2．会計基準", "３．連結財務諸表",
+        "3．連結財務諸表", "連結貸借対照表", "連結損益計算書",
     ]
 
     lines = full_text.split("\n")
@@ -106,31 +83,12 @@ def extract_guidance_from_pdf(uploaded_file) -> str:
 
     if start_idx is not None:
         if end_idx is None:
-            # 見通しセクション以降、最大50行を抽出
             end_idx = min(start_idx + 50, len(lines))
-        extracted = "\n".join(lines[start_idx:end_idx]).strip()
-        return extracted
+        return "\n".join(lines[start_idx:end_idx]).strip()
 
-    # マーカーが見つからなかった場合、全テキストの最初の3000文字を返す
     return full_text[:3000]
 
 
-def extract_full_text_from_pdf(uploaded_file) -> str:
-    """PDFから全テキストを抽出"""
-    if not PDF_AVAILABLE:
-        return ""
-    full_text = ""
-    with pdfplumber.open(uploaded_file) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                full_text += page_text + "\n"
-    return full_text.strip()
-
-
-# ============================================================
-# 分析プロンプト
-# ============================================================
 ANALYSIS_PROMPT = """【今日の日付: {today}】
 
 あなたは、ヘッジファンドのアナリストとして、決算ガイダンスの言語分析を行う専門家です。
@@ -203,12 +161,9 @@ COMPARISON_SECTION = """
 上記を tone_analysis の中に "tone_change" というキーで追加してください。
 """
 
-
 # ============================================================
 # UI
 # ============================================================
-
-# --- 入力セクション ---
 st.markdown("### 📝 銘柄情報")
 
 col_info1, col_info2 = st.columns(2)
@@ -217,25 +172,23 @@ with col_info1:
 with col_info2:
     period = st.text_input("決算期", placeholder="例: 2026年2月期 通期")
 
-# TDnet 検索リンク
+# TDnet便利リンク
 code_only = "".join(c for c in company if c.isdigit())
 if code_only and len(code_only) == 4:
-    tdnet_url = f"https://www.google.com/search?q={code_only}+決算短信+site:release.tdnet.info"
-    st.markdown(f"📎 [TDnetで {code_only} の開示を検索する]({tdnet_url})")
-    st.caption("↑ クリックして最新の決算短信PDFをダウンロード → 下のアップロード欄にドロップ")
+    st.markdown(f"📎 [Google で {code_only} の決算短信を検索](https://www.google.com/search?q={code_only}+決算短信+filetype:pdf)")
 
 st.divider()
 
-# --- データ入力方法の選択 ---
+# --- データ入力 ---
 st.markdown("### 📄 ガイダンスデータの入力")
 input_method = st.radio(
     "入力方法を選択",
     ["PDFアップロード（推奨）", "テキスト直接入力"],
     horizontal=True,
-    key="input_method",
 )
 
 guidance_text = ""
+prev_guidance = ""
 
 if input_method == "PDFアップロード（推奨）":
     if not PDF_AVAILABLE:
@@ -245,66 +198,55 @@ if input_method == "PDFアップロード（推奨）":
             "決算短信PDFをアップロード",
             type=["pdf"],
             help="決算短信PDFをドラッグ&ドロップ。「今後の見通し」セクションを自動で抽出します。",
-            key="pdf_upload",
         )
 
         if uploaded_pdf is not None:
-            with st.spinner("PDFからテキストを抽出中..."):
-                extracted = extract_guidance_from_pdf(uploaded_pdf)
-                if extracted:
-                    st.session_state.extracted_text = extracted
-                    st.success(f"✅ テキスト抽出完了 ({len(extracted)}文字)")
-                else:
-                    st.warning("テキストを抽出できませんでした。手動入力に切り替えてください。")
+            if st.session_state.last_pdf_name != uploaded_pdf.name:
+                with st.spinner("PDFからテキストを抽出中..."):
+                    extracted = extract_guidance_from_pdf(uploaded_pdf)
+                    if extracted:
+                        st.session_state.extracted_text = extracted
+                        st.session_state.last_pdf_name = uploaded_pdf.name
+                    else:
+                        st.session_state.extracted_text = ""
+                        st.warning("テキストを抽出できませんでした。手動入力に切り替えてください。")
 
-        # 抽出されたテキストを編集可能な状態で表示
+        if st.session_state.extracted_text:
+            st.success(f"✅ テキスト抽出完了 ({len(st.session_state.extracted_text)}文字)")
+
         guidance_text = st.text_area(
             "抽出されたガイダンステキスト（編集可能）",
             value=st.session_state.extracted_text,
             height=250,
-            key="guidance_extracted",
-            help="自動抽出されたテキストです。不要な部分を削除したり、足りない部分を追加できます。",
         )
 
-        # 前回PDFのアップロード（比較用）
         with st.expander("📊 前回の決算短信と比較する（任意）"):
             st.caption("前回の決算短信PDFをアップロードすると、トーンの変化を自動検出します")
-            prev_pdf = st.file_uploader(
-                "前回の決算短信PDF",
-                type=["pdf"],
-                key="prev_pdf_upload",
-            )
+            prev_pdf = st.file_uploader("前回の決算短信PDF", type=["pdf"])
             if prev_pdf is not None:
-                with st.spinner("前回PDFからテキスト抽出中..."):
-                    prev_extracted = extract_guidance_from_pdf(prev_pdf)
-                    if prev_extracted:
-                        st.session_state.extracted_prev_text = prev_extracted
-                        st.success(f"✅ 前回テキスト抽出完了 ({len(prev_extracted)}文字)")
-
+                if st.session_state.last_prev_pdf_name != prev_pdf.name:
+                    with st.spinner("前回PDFからテキスト抽出中..."):
+                        prev_extracted = extract_guidance_from_pdf(prev_pdf)
+                        if prev_extracted:
+                            st.session_state.extracted_prev_text = prev_extracted
+                            st.session_state.last_prev_pdf_name = prev_pdf.name
             prev_guidance = st.text_area(
                 "前回のガイダンステキスト（編集可能）",
                 value=st.session_state.extracted_prev_text,
                 height=150,
-                key="prev_guidance_extracted",
             )
 
 else:
-    # テキスト直接入力
     guidance_text = st.text_area(
         "ガイダンス本文",
-        placeholder="決算説明資料のガイダンス部分、決算短信の「今後の見通し」セクション、"
-                    "IR説明会のコメントなどを貼り付けてください。",
+        placeholder="決算説明資料のガイダンス部分、決算短信の「今後の見通し」セクションを貼り付け",
         height=250,
-        key="guidance_input",
     )
-
     with st.expander("📊 前回のガイダンスと比較する（任意）"):
-        st.caption("前回の決算ガイダンスを貼り付けると、トーンの変化を検出します")
         prev_guidance = st.text_area(
             "前回のガイダンス本文",
-            placeholder="前四半期または前年同期のガイダンステキストを貼り付け",
+            placeholder="前四半期のガイダンステキストを貼り付け",
             height=150,
-            key="prev_guidance_input",
         )
 
 # --- 分析実行 ---
@@ -313,9 +255,8 @@ can_analyze = company.strip() and period.strip() and guidance_text.strip()
 if st.button("🎙️ ガイダンスを分析する", type="primary", disabled=not can_analyze):
     with st.spinner("Claude がガイダンスの言葉を読み解いています..."):
         prev_section = ""
-        prev_text = prev_guidance if "prev_guidance" in dir() else ""
-        if prev_text and prev_text.strip():
-            prev_section = COMPARISON_SECTION.format(prev_text=prev_text.strip())
+        if prev_guidance and prev_guidance.strip():
+            prev_section = COMPARISON_SECTION.format(prev_text=prev_guidance.strip())
 
         prompt = ANALYSIS_PROMPT.format(
             today=TODAY,
@@ -361,20 +302,16 @@ if g:
 
     with col_t1:
         st.markdown("### 🟢 強気な表現")
-        aggressive = tone.get("aggressive_phrases", [])
-        if aggressive:
-            for phrase in aggressive:
-                st.markdown(f"- 「{phrase}」")
-        else:
+        for phrase in tone.get("aggressive_phrases", []):
+            st.markdown(f"- 「{phrase}」")
+        if not tone.get("aggressive_phrases"):
             st.caption("検出なし")
 
     with col_t2:
         st.markdown("### 🔴 弱気・慎重な表現")
-        defensive = tone.get("defensive_phrases", [])
-        if defensive:
-            for phrase in defensive:
-                st.markdown(f"- 「{phrase}」")
-        else:
+        for phrase in tone.get("defensive_phrases", []):
+            st.markdown(f"- 「{phrase}」")
+        if not tone.get("defensive_phrases"):
             st.caption("検出なし")
 
     tone_verdict = tone.get("tone_verdict", "")
@@ -388,7 +325,6 @@ if g:
     st.divider()
 
     col_e1, col_e2 = st.columns(2)
-
     with col_e1:
         st.markdown("### 🔦 経営者が強調したこと")
         st.caption("「これを見てほしい」という意図")
@@ -405,7 +341,6 @@ if g:
 
     gvr = g.get("guidance_vs_reality", {})
     st.markdown("### 📐 ガイダンスは保守的か？楽観的か？")
-
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown("**保守的サイン（上方修正余地）**")
@@ -415,7 +350,6 @@ if g:
         st.markdown("**楽観的サイン（下方修正リスク）**")
         for sign in gvr.get("aggressive_signs", []):
             st.markdown(f"- {sign}")
-
     gvr_verdict = gvr.get("verdict", "")
     if gvr_verdict:
         st.info(f"**判定:** {gvr_verdict}")
@@ -438,15 +372,9 @@ if g:
 else:
     if not can_analyze:
         st.info("銘柄名・決算期を入力し、PDFをアップロードまたはテキストを入力してください。")
-
         st.markdown("### 💡 3ステップで分析")
         st.markdown("""
-        1. **銘柄コードを入力** → TDnet検索リンクが自動生成される
-        2. **リンクをクリック → 決算短信PDFをダウンロード → アップロード欄にドロップ**
+        1. **銘柄コードと決算期を入力**
+        2. **決算短信PDFをアップロード**（「今後の見通し」を自動抽出）
         3. **「ガイダンスを分析する」をクリック**
-
-        「今後の見通し」セクションが自動抽出されます。
-
-        **最も効果が高い使い方:**
-        前回と今回の決算短信PDFを両方アップロードして、**トーンの変化**を検出すること。
         """)
