@@ -10,7 +10,7 @@ def call_anthropic_api(headers, payload, max_retries=3):
                 "https://api.anthropic.com/v1/messages",
                 headers=headers,
                 json=payload,
-                timeout=90
+                timeout=180
             )
             if response.status_code == 529:
                 if attempt < max_retries - 1:
