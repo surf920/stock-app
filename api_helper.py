@@ -72,7 +72,7 @@ def call_anthropic_api(headers, payload, max_retries=3):
                             "smart_money_silence", "falsification_criteria", "emotional_appeal",
                             "strength_score", "strongest_response", "weakest_response",
                             "overall_verdict", "next_actions", "next_action",
-                            "approach_name", "data_sources", "framework", "pitfalls"]:
+                            "approach_name", "dgit pushata_sources", "framework", "pitfalls"]:
                     pattern = f'"{key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'
                     km = re.search(pattern, text, re.DOTALL)
                     if km:
