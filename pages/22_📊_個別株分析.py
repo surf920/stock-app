@@ -1,14 +1,6 @@
 from core.auth import require_auth
 require_auth()
 
-"""
-機能: 個別株分析 (Phase 2) - J-Quants V2 API 対応版
-Phase 1: バリュエーション、成長性、健全性、逆張りシグナル
-Phase 2 追加:
-  D. 決算の質 (進捗率、前年同期比EPS、上方修正検知) ← 自動
-  C. セグメント情報 (構造化手入力) ← 手動 (J-Quantsにセグメントデータなし)
-"""
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -273,18 +265,11 @@ def calc_margin_signal(margin: pd.DataFrame) -> dict:
 # Phase 2 計算: D. 決算の質
 # ============================================================
 def calc_earnings_quality(summary: pd.DataFrame) -> dict:
-    """決算の質を判定する
-    1. 進捗率: 直近四半期の累計実績 / 通期会社予想
-    2. 前年同期比EPS: 直近4四半期それぞれの前年同期比
-    3. 上方修正検知: 同一会計年度内で会社予想が増額されたか
-    """
     if summary.empty or "CurPerType" not in summary.columns:
         return {}
 
     result = {}
 
-    # --- 1. 進捗率 ---
-    # 直近の開示で通期予想がある行を探す
     latest = summary.iloc[-1]
     cur_per_type = latest.get("CurPerType", "")
     f_sales = _f(latest.get("FSales"))
@@ -296,7 +281,6 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
     actual_np = _f(latest.get("NP"))
     actual_eps = _f(latest.get("EPS"))
 
-    # 進捗率の期待値 (時間ベースの進捗)
     expected_progress = {"1Q": 25, "2Q": 50, "3Q": 75, "FY": 100, "4Q": 100}
     expected = expected_progress.get(cur_per_type, None)
 
@@ -314,7 +298,6 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
     result["forecast_np"] = f_np
     result["forecast_eps"] = f_eps
 
-    # 進捗率の判定
     prog_np = result.get("progress_np")
     if prog_np and expected:
         overachieve = prog_np - expected
@@ -330,8 +313,6 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
             result["progress_verdict"] = "🔴 大幅未達 (下方修正懸念)"
         result["progress_overachieve"] = round(overachieve, 1)
 
-    # --- 2. 前年同期比EPS ---
-    # 同じ CurPerType の開示を年度順に並べて、前年同期と比較
     eps_yoy_list = []
     for qt in ["1Q", "2Q", "3Q", "FY"]:
         qt_rows = summary[summary["CurPerType"] == qt].copy()
@@ -349,7 +330,6 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
 
     result["eps_yoy"] = eps_yoy_list
 
-    # EPS加速/減速判定
     if len(eps_yoy_list) >= 2:
         recent_yoys = [e["yoy_pct"] for e in eps_yoy_list[-3:]]
         if all(y > 0 for y in recent_yoys):
@@ -364,14 +344,11 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
         else:
             result["eps_trend"] = "🔴 EPS大幅減"
 
-    # --- 3. 上方修正検知 ---
-    # 同一会計年度(CurFYEn)内で、FSalesやFNPが増えているか
     if "CurFYEn" in summary.columns:
         latest_fy_end = latest.get("CurFYEn")
         if latest_fy_end:
             same_fy = summary[summary["CurFYEn"] == latest_fy_end].copy()
             if len(same_fy) >= 2:
-                # 同一年度の最初と最新の予想を比較
                 first_fnp = _f(same_fy.iloc[0].get("FNP"))
                 last_fnp = _f(same_fy.iloc[-1].get("FNP"))
                 first_fsales = _f(same_fy.iloc[0].get("FSales"))
@@ -387,7 +364,6 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
 
                 result["revisions"] = revisions
 
-                # 修正方向の判定
                 if revisions:
                     np_rev = next((r for r in revisions if r["item"] == "純利益予想"), None)
                     if np_rev:
@@ -404,6 +380,179 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
 
 
 # ============================================================
+# KPI スコアリング(6カテゴリ、各 -2〜+2、合計 -12〜+12)
+# ============================================================
+def calc_kpi_score(result: dict) -> dict:
+    scores = {}
+    details = {}
+
+    # ① バリュエーション(PER パーセンタイル)
+    per_pct = result.get("per_percentile")
+    if per_pct is not None:
+        if per_pct <= 20:
+            scores["valuation"] = 2
+            details["valuation"] = f"PER {per_pct}%タイル → 底値圏 💎"
+        elif per_pct <= 40:
+            scores["valuation"] = 1
+            details["valuation"] = f"PER {per_pct}%タイル → 割安 🔵"
+        elif per_pct <= 60:
+            scores["valuation"] = 0
+            details["valuation"] = f"PER {per_pct}%タイル → 中立 🟢"
+        elif per_pct <= 80:
+            scores["valuation"] = -1
+            details["valuation"] = f"PER {per_pct}%タイル → 割高 🟡"
+        else:
+            scores["valuation"] = -2
+            details["valuation"] = f"PER {per_pct}%タイル → 過熱圏 🔴"
+    else:
+        scores["valuation"] = 0
+        details["valuation"] = "データなし"
+
+    # ② 成長性(売上CAGR + 営業利益率の変化)
+    cagr = result.get("sales_cagr_5y")
+    op_first = result.get("op_margin_first")
+    op_last = result.get("op_margin_last")
+    margin_improving = (op_last is not None and op_first is not None and op_last > op_first)
+
+    if cagr is not None:
+        if cagr >= 15 and margin_improving:
+            scores["growth"] = 2
+            details["growth"] = f"売上CAGR {cagr}% + 利益率改善 🟢🟢"
+        elif cagr >= 5:
+            scores["growth"] = 1
+            details["growth"] = f"売上CAGR {cagr}% → 堅調 🟢"
+        elif cagr >= 0:
+            scores["growth"] = 0
+            details["growth"] = f"売上CAGR {cagr}% → 横ばい"
+        elif not margin_improving and cagr < 0:
+            scores["growth"] = -2
+            details["growth"] = f"売上CAGR {cagr}% + 利益率悪化 🔴🔴"
+        else:
+            scores["growth"] = -1
+            details["growth"] = f"売上CAGR {cagr}% → 減収 🔴"
+    else:
+        scores["growth"] = 0
+        details["growth"] = "データなし"
+
+    # ③ 健全性(自己資本比率 + FCF連続プラス)
+    eq_ratio = result.get("equity_ratio")
+    fcf_streak = result.get("fcf_positive_streak", False)
+
+    if eq_ratio is not None:
+        if eq_ratio >= 50 and fcf_streak:
+            scores["health"] = 2
+            details["health"] = f"自己資本比率 {eq_ratio}% + FCF5年連続◯ 🟢🟢"
+        elif eq_ratio >= 30:
+            scores["health"] = 1
+            details["health"] = f"自己資本比率 {eq_ratio}% 🟢"
+        elif eq_ratio >= 20:
+            scores["health"] = 0
+            details["health"] = f"自己資本比率 {eq_ratio}% → 普通"
+        else:
+            scores["health"] = -1
+            details["health"] = f"自己資本比率 {eq_ratio}% → 低い 🟠"
+    else:
+        scores["health"] = 0
+        details["health"] = "データなし"
+
+    # ④ 決算の質(進捗率の判定)
+    eq = result.get("earnings_quality", {})
+    progress_verdict = eq.get("progress_verdict", "")
+
+    if "大幅超過" in progress_verdict:
+        scores["earnings"] = 2
+        details["earnings"] = progress_verdict
+    elif "順調" in progress_verdict:
+        scores["earnings"] = 1
+        details["earnings"] = progress_verdict
+    elif "計画線上" in progress_verdict:
+        scores["earnings"] = 0
+        details["earnings"] = progress_verdict
+    elif "やや遅れ" in progress_verdict:
+        scores["earnings"] = -1
+        details["earnings"] = progress_verdict
+    elif "大幅未達" in progress_verdict:
+        scores["earnings"] = -2
+        details["earnings"] = progress_verdict
+    else:
+        scores["earnings"] = 0
+        details["earnings"] = "判定なし"
+
+    # ⑤ EPSトレンド
+    eps_trend = eq.get("eps_trend", "")
+
+    if "成長加速" in eps_trend:
+        scores["eps"] = 2
+        details["eps"] = eps_trend
+    elif "前年同期比プラス" in eps_trend or "成長だが" in eps_trend:
+        scores["eps"] = 1
+        details["eps"] = eps_trend
+    elif "微減" in eps_trend:
+        scores["eps"] = -1
+        details["eps"] = eps_trend
+    elif "大幅減" in eps_trend:
+        scores["eps"] = -2
+        details["eps"] = eps_trend
+    else:
+        scores["eps"] = 0
+        details["eps"] = "判定なし"
+
+    # ⑥ 需給(信用買残パーセンタイル)
+    long_pct = result.get("long_margin_percentile")
+
+    if long_pct is not None:
+        if long_pct <= 20:
+            scores["demand"] = 2
+            details["demand"] = f"買残 {long_pct}%タイル → 需給好転 💎"
+        elif long_pct <= 40:
+            scores["demand"] = 1
+            details["demand"] = f"買残 {long_pct}%タイル → 軽い 🔵"
+        elif long_pct <= 60:
+            scores["demand"] = 0
+            details["demand"] = f"買残 {long_pct}%タイル → 中立"
+        elif long_pct <= 80:
+            scores["demand"] = -1
+            details["demand"] = f"買残 {long_pct}%タイル → 重い 🟡"
+        else:
+            scores["demand"] = -2
+            details["demand"] = f"買残 {long_pct}%タイル → 過剰 🔴"
+    else:
+        scores["demand"] = 0
+        details["demand"] = "データなし"
+
+    # 合計
+    total = sum(scores.values())
+
+    # 総合判定
+    if total >= 8:
+        verdict = "🟢 強い買い"
+        verdict_color = "success"
+    elif total >= 4:
+        verdict = "🟢 買い"
+        verdict_color = "success"
+    elif total >= 1:
+        verdict = "🟡 やや買い(確信度低)"
+        verdict_color = "warning"
+    elif total >= -3:
+        verdict = "⚪ 見送り"
+        verdict_color = "info"
+    elif total >= -7:
+        verdict = "🟠 売り検討"
+        verdict_color = "warning"
+    else:
+        verdict = "🔴 強い売り"
+        verdict_color = "error"
+
+    return {
+        "scores": scores,
+        "details": details,
+        "total": total,
+        "verdict": verdict,
+        "verdict_color": verdict_color,
+    }
+
+
+# ============================================================
 # 統合分析
 # ============================================================
 def analyze(code: str) -> dict:
@@ -416,7 +565,7 @@ def analyze(code: str) -> dict:
     sector = info.get("Sector17CodeName") or info.get("Sector33CodeName") or info.get("SectorName") or "-"
     market = info.get("MarketCodeName") or info.get("Market") or "-"
 
-    return {
+    result = {
         "code": code,
         "company_name": company_name,
         "sector": sector,
@@ -427,6 +576,11 @@ def analyze(code: str) -> dict:
         **calc_margin_signal(margin),
         "earnings_quality": calc_earnings_quality(summary),
     }
+
+    # KPIスコアを計算して追加
+    result["kpi"] = calc_kpi_score(result)
+
+    return result
 
 
 # ============================================================
@@ -470,6 +624,27 @@ def render_bar(pct):
     )
 
 
+def render_score_bar(score, max_score=2):
+    """スコア(-2〜+2)をビジュアルバーで表示"""
+    normalized = (score + max_score) / (max_score * 2) * 100
+    if score >= 2:
+        color = "#1D9E75"
+    elif score >= 1:
+        color = "#378ADD"
+    elif score == 0:
+        color = "#888888"
+    elif score >= -1:
+        color = "#EF9F27"
+    else:
+        color = "#E24B4A"
+    st.markdown(
+        f'<div style="position:relative;height:8px;background:#2a2a3e;border-radius:4px;margin:2px 0;">'
+        f'<div style="position:absolute;left:0;top:0;width:{normalized}%;height:100%;background:{color};border-radius:4px;"></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 # --- 入力 ---
 col_in1, col_in2, _ = st.columns([1, 1, 4])
 with col_in1:
@@ -495,6 +670,51 @@ if r:
 
     st.subheader(f"{r.get('company_name')} ({r.get('code')})")
     st.caption(f"{r.get('sector')} / {r.get('market')}")
+
+    # ============================================================
+    # 🎯 総合判定(KPIスコア)— 最初に大きく表示
+    # ============================================================
+    kpi = r.get("kpi", {})
+    if kpi:
+        total = kpi.get("total", 0)
+        verdict = kpi.get("verdict", "判定なし")
+        verdict_color = kpi.get("verdict_color", "info")
+
+        # 大きく判定を表示
+        st.markdown("### 🎯 総合判定")
+        if verdict_color == "success":
+            st.success(f"**{verdict}　　スコア: {total:+d} / 12**")
+        elif verdict_color == "error":
+            st.error(f"**{verdict}　　スコア: {total:+d} / 12**")
+        elif verdict_color == "warning":
+            st.warning(f"**{verdict}　　スコア: {total:+d} / 12**")
+        else:
+            st.info(f"**{verdict}　　スコア: {total:+d} / 12**")
+
+        # 6カテゴリの内訳
+        scores = kpi.get("scores", {})
+        details = kpi.get("details", {})
+
+        categories = [
+            ("valuation", "① バリュエーション"),
+            ("growth", "② 成長性"),
+            ("health", "③ 健全性"),
+            ("earnings", "④ 決算の質"),
+            ("eps", "⑤ EPSトレンド"),
+            ("demand", "⑥ 需給"),
+        ]
+
+        col_left, col_right = st.columns(2)
+        for i, (key, label) in enumerate(categories):
+            s = scores.get(key, 0)
+            d = details.get(key, "")
+            sign = "+" if s > 0 else ""
+            with col_left if i < 3 else col_right:
+                st.markdown(f"**{label}**: {sign}{s}")
+                render_score_bar(s)
+                st.caption(d)
+
+        st.divider()
 
     # 主要指標 4カラム
     c1, c2, c3, c4 = st.columns(4)
@@ -556,9 +776,7 @@ if r:
 
     st.divider()
 
-    # ============================================================
-    # ④ セグメント情報 (Phase 2: C - 構造化手入力)
-    # ============================================================
+    # ④ セグメント情報
     st.markdown("### ④ セグメント別売上構成")
     st.caption("J-Quantsにセグメントデータはないため、決算説明資料を見ながら手入力。")
     st.caption("TIP: 決算説明資料は各社IRページ、または TDnet (https://www.release.tdnet.info/) で取得")
@@ -579,7 +797,6 @@ if r:
             if name:
                 seg_data.append({"name": name, "pct": sales_pct, "growth": growth})
 
-    # セグメント棒グラフ (手入力されている場合)
     if seg_data and any(s["pct"] > 0 for s in seg_data):
         colors = ["#378ADD", "#1D9E75", "#EF9F27", "#7F77DD", "#E24B4A", "#D4537E", "#5DCAA5", "#F0997B"]
         bar_html = '<div style="display:flex;width:100%;height:32px;border-radius:8px;overflow:hidden;margin:8px 0;">'
@@ -607,14 +824,11 @@ if r:
 
     st.divider()
 
-    # ============================================================
-    # ⑤ 決算の質 (Phase 2: D - 自動取得)
-    # ============================================================
+    # ⑤ 決算の質
     eq = r.get("earnings_quality", {})
     st.markdown("### ⑤ 決算の質")
 
     if eq:
-        # 進捗率
         qt = eq.get("current_quarter", "-")
         st.markdown(f"**直近開示: {qt}**")
 
@@ -639,14 +853,12 @@ if r:
                           delta=f"期待値比: {round(prog_n - exp, 1):+}pt" if exp else None,
                           delta_color="normal" if prog_n and exp and prog_n >= exp else "inverse")
 
-        # 進捗率判定
         verdict = eq.get("progress_verdict")
         if verdict:
             st.markdown(f"**進捗判定: {verdict}**")
 
         st.write("")
 
-        # 前年同期比EPS
         eps_yoy = eq.get("eps_yoy", [])
         if eps_yoy:
             st.markdown("**四半期EPS 前年同期比**")
@@ -661,14 +873,12 @@ if r:
                         delta_color=color,
                     )
 
-        # EPSトレンド判定
         eps_trend = eq.get("eps_trend")
         if eps_trend:
             st.markdown(f"**EPSトレンド: {eps_trend}**")
 
         st.write("")
 
-        # 上方修正検知
         revisions = eq.get("revisions", [])
         if revisions:
             st.markdown("**今期の会社予想修正**")
@@ -682,7 +892,6 @@ if r:
         if rev_verdict:
             st.markdown(f"**修正判定: {rev_verdict}**")
 
-        # 通期会社予想
         with st.expander("📋 通期会社予想の詳細"):
             f_data = {
                 "売上高": eq.get("forecast_sales"),
@@ -701,7 +910,7 @@ if r:
 
     st.divider()
 
-    # ⑥ 逆張りシグナル (既存)
+    # ⑥ 逆張りシグナル
     st.markdown("### ⑥ 逆張りタイミング")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
