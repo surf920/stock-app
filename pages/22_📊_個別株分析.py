@@ -7,9 +7,22 @@ import requests
 import json
 from datetime import datetime, timedelta
 from typing import Optional
+from api_helper import call_anthropic_api
 
 # === J-Quants V2 API 設定 ===
 JQUANTS_BASE = "https://api.jquants.com/v2"
+
+# === Claude API 設定 ===
+MODEL = "claude-opus-4-6"
+MAX_TOKENS = 2000
+TODAY = datetime.now().strftime("%Y年%m月%d日")
+ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
+HEADERS = {
+    "x-api-key": ANTHROPIC_API_KEY,
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+}
+WEB_SEARCH_TOOL = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
 
 # === ページ設定 ===
 st.set_page_config(page_title="個別株分析", page_icon="📊", layout="wide")
@@ -21,6 +34,8 @@ if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = None
 if "analysis_code" not in st.session_state:
     st.session_state.analysis_code = None
+if "rumor_result" not in st.session_state:
+    st.session_state.rumor_result = None
 
 
 # ============================================================
@@ -380,13 +395,70 @@ def calc_earnings_quality(summary: pd.DataFrame) -> dict:
 
 
 # ============================================================
-# KPI スコアリング(6カテゴリ、各 -2〜+2、合計 -12〜+12)
+# Rumor Stage 自動判定(AI + Web Search)
 # ============================================================
-def calc_kpi_score(result: dict) -> dict:
+def calc_rumor_stage(company_name: str, code: str, theme: str) -> dict:
+    prompt = f"""【今日の日付: {TODAY}】
+
+あなたは投資リサーチャーです。以下の銘柄と投資テーマについて、
+「噂の成熟度(Rumor Stage)」を判定してください。
+
+銘柄: {company_name}（証券コード: {code}）
+投資テーマ: {theme}
+
+必ずウェブ検索を使って、以下の5つを調査してください:
+
+1. この銘柄+テーマに関する大手メディア(日経、Bloomberg、Reuters)の記事数と内容
+2. 証券会社アナリストの推奨状況(目標株価の引き上げはあるか)
+3. 直近3ヶ月〜1年の株価上昇率
+4. SNS・掲示板(Twitter/X、Yahoo掲示板)での言及量と温度感
+5. 機関投資家・大株主の動き(大量保有報告等)
+
+これらを総合して、以下のJSON形式で返してください(他のテキストは含めない):
+
+{{
+  "rumor_stage": 1から5の整数,
+  "stage_label": "ステージの名前",
+  "evidence": "判定の根拠を3〜5文で。具体的な記事名、数字、日付を含める",
+  "media_count": "大手メディアの記事数の概算(例: 約3本、約20本以上)",
+  "market_sentiment": "市場の温度感を一言で(例: ほぼ無関心、一部で注目、広く認知、過熱気味)",
+  "risk_note": "この Rumor Stage で注意すべきこと"
+}}
+
+Rumor Stage の定義:
+1 = 微かな予兆(ほぼ誰も知らない。大手メディア記事ゼロ。専門家だけが注目)
+2 = 芽吹き(専門メディアに1〜3本。株価はほぼ未反応。早期参入のチャンス)
+3 = 噂の拡散(日経・Bloombergに記事。株価が3ヶ月で+20%以上。買いの最適ゾーン)
+4 = コンセンサス形成(テレビ報道。アナリスト大多数が買い推奨。もう遅い)
+5 = 事実確認(決算サプライズや公式発表で確定。売りを検討すべき)
+
+【文体ルール】
+- 高校生にも理解できる日本語
+- 専門用語は括弧で説明
+- 率直な口調
+"""
+
+    payload = {
+        "model": MODEL,
+        "max_tokens": MAX_TOKENS,
+        "tools": WEB_SEARCH_TOOL,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    result, error = call_anthropic_api(HEADERS, payload)
+    if error:
+        return {"error": error}
+    return result
+
+
+# ============================================================
+# KPI スコアリング(6カテゴリ + Rumor補正 → 100点満点)
+# ============================================================
+def calc_kpi_score(result: dict, rumor_stage: int = None) -> dict:
     scores = {}
     details = {}
 
-    # ① バリュエーション(PER パーセンタイル)
+    # ① バリュエーション
     per_pct = result.get("per_percentile")
     if per_pct is not None:
         if per_pct <= 20:
@@ -408,7 +480,7 @@ def calc_kpi_score(result: dict) -> dict:
         scores["valuation"] = 0
         details["valuation"] = "データなし"
 
-    # ② 成長性(売上CAGR + 営業利益率の変化)
+    # ② 成長性
     cagr = result.get("sales_cagr_5y")
     op_first = result.get("op_margin_first")
     op_last = result.get("op_margin_last")
@@ -434,7 +506,7 @@ def calc_kpi_score(result: dict) -> dict:
         scores["growth"] = 0
         details["growth"] = "データなし"
 
-    # ③ 健全性(自己資本比率 + FCF連続プラス)
+    # ③ 健全性
     eq_ratio = result.get("equity_ratio")
     fcf_streak = result.get("fcf_positive_streak", False)
 
@@ -455,7 +527,7 @@ def calc_kpi_score(result: dict) -> dict:
         scores["health"] = 0
         details["health"] = "データなし"
 
-    # ④ 決算の質(進捗率の判定)
+    # ④ 決算の質
     eq = result.get("earnings_quality", {})
     progress_verdict = eq.get("progress_verdict", "")
 
@@ -497,7 +569,7 @@ def calc_kpi_score(result: dict) -> dict:
         scores["eps"] = 0
         details["eps"] = "判定なし"
 
-    # ⑥ 需給(信用買残パーセンタイル)
+    # ⑥ 需給
     long_pct = result.get("long_margin_percentile")
 
     if long_pct is not None:
@@ -520,33 +592,60 @@ def calc_kpi_score(result: dict) -> dict:
         scores["demand"] = 0
         details["demand"] = "データなし"
 
-    # 合計
-    total = sum(scores.values())
+    # KPI合計(-12 〜 +12)
+    kpi_total = sum(scores.values())
 
-    # 総合判定
-    if total >= 8:
-        verdict = "🟢 強い買い"
-        verdict_color = "success"
-    elif total >= 4:
+    # 100点満点に変換(KPI -12〜+12 → 0〜100)
+    base_score = round((kpi_total + 12) / 24 * 100)
+
+    # Rumor 補正
+    rumor_multiplier = 1.0
+    rumor_label = ""
+    if rumor_stage is not None:
+        if rumor_stage == 1:
+            rumor_multiplier = 1.3
+            rumor_label = "💤 微かな予兆 → 大幅加点"
+        elif rumor_stage == 2:
+            rumor_multiplier = 1.15
+            rumor_label = "🌱 芽吹き → 加点"
+        elif rumor_stage == 3:
+            rumor_multiplier = 1.0
+            rumor_label = "📢 噂の拡散 → 補正なし"
+        elif rumor_stage == 4:
+            rumor_multiplier = 0.7
+            rumor_label = "📰 コンセンサス形成 → 大幅減点"
+        elif rumor_stage == 5:
+            rumor_multiplier = 0.5
+            rumor_label = "✅ 事実確認 → 半減"
+
+    final_score = min(100, max(0, round(base_score * rumor_multiplier)))
+
+    # 5段階判定
+    if final_score >= 80:
         verdict = "🟢 買い"
         verdict_color = "success"
-    elif total >= 1:
-        verdict = "🟡 やや買い(確信度低)"
-        verdict_color = "warning"
-    elif total >= -3:
-        verdict = "⚪ 見送り"
+    elif final_score >= 60:
+        verdict = "🔵 興味あり"
         verdict_color = "info"
-    elif total >= -7:
-        verdict = "🟠 売り検討"
+    elif final_score >= 40:
+        verdict = "⚪ 様子見"
+        verdict_color = "warning"
+    elif final_score >= 20:
+        verdict = "🟠 注意"
         verdict_color = "warning"
     else:
-        verdict = "🔴 強い売り"
+        verdict = "🔴 危険"
         verdict_color = "error"
 
     return {
         "scores": scores,
         "details": details,
-        "total": total,
+        "kpi_total": kpi_total,
+        "base_score": base_score,
+        "rumor_stage": rumor_stage,
+        "rumor_multiplier": rumor_multiplier,
+        "rumor_label": rumor_label,
+        "final_score": final_score,
         "verdict": verdict,
         "verdict_color": verdict_color,
     }
@@ -576,9 +675,6 @@ def analyze(code: str) -> dict:
         **calc_margin_signal(margin),
         "earnings_quality": calc_earnings_quality(summary),
     }
-
-    # KPIスコアを計算して追加
-    result["kpi"] = calc_kpi_score(result)
 
     return result
 
@@ -625,7 +721,6 @@ def render_bar(pct):
 
 
 def render_score_bar(score, max_score=2):
-    """スコア(-2〜+2)をビジュアルバーで表示"""
     normalized = (score + max_score) / (max_score * 2) * 100
     if score >= 2:
         color = "#1D9E75"
@@ -645,11 +740,33 @@ def render_score_bar(score, max_score=2):
     )
 
 
+def render_big_score(score):
+    if score >= 80:
+        color = "#1D9E75"
+    elif score >= 60:
+        color = "#378ADD"
+    elif score >= 40:
+        color = "#888888"
+    elif score >= 20:
+        color = "#EF9F27"
+    else:
+        color = "#E24B4A"
+    st.markdown(
+        f'<div style="text-align:center;padding:20px;">'
+        f'<div style="font-size:72px;font-weight:bold;color:{color};">{score}</div>'
+        f'<div style="font-size:16px;color:#888;">/ 100点</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 # --- 入力 ---
-col_in1, col_in2, _ = st.columns([1, 1, 4])
+col_in1, col_in2, col_in3 = st.columns([1, 2, 1])
 with col_in1:
     code = st.text_input("証券コード", value="7011", placeholder="例: 7011", max_chars=5)
 with col_in2:
+    theme = st.text_input("投資テーマ", value="", placeholder="例: AI向け半導体検査装置の需要拡大")
+with col_in3:
     st.write("")
     analyze_btn = st.button("🔍 分析する", type="primary", use_container_width=True)
 
@@ -658,6 +775,7 @@ if analyze_btn and code.strip():
         try:
             st.session_state.analysis_result = analyze(code.strip())
             st.session_state.analysis_code = code.strip()
+            st.session_state.rumor_result = None
         except RuntimeError as e:
             st.error(str(e))
         except Exception as e:
@@ -672,49 +790,111 @@ if r:
     st.caption(f"{r.get('sector')} / {r.get('market')}")
 
     # ============================================================
-    # 🎯 総合判定(KPIスコア)— 最初に大きく表示
+    # Rumor Stage 判定(テーマが入力されている場合)
     # ============================================================
-    kpi = r.get("kpi", {})
-    if kpi:
-        total = kpi.get("total", 0)
-        verdict = kpi.get("verdict", "判定なし")
-        verdict_color = kpi.get("verdict_color", "info")
+    rumor_stage_value = None
+    rumor_data = st.session_state.rumor_result
 
-        # 大きく判定を表示
-        st.markdown("### 🎯 総合判定")
-        if verdict_color == "success":
-            st.success(f"**{verdict}　　スコア: {total:+d} / 12**")
-        elif verdict_color == "error":
-            st.error(f"**{verdict}　　スコア: {total:+d} / 12**")
-        elif verdict_color == "warning":
-            st.warning(f"**{verdict}　　スコア: {total:+d} / 12**")
-        else:
-            st.info(f"**{verdict}　　スコア: {total:+d} / 12**")
+    if theme.strip() and not rumor_data:
+        if st.button("🔍 Rumor Stage を判定する（AI + Web検索）", type="secondary"):
+            with st.spinner("AIがウェブ検索でRumor Stageを判定中...（最大3分かかります）"):
+                rumor_data = calc_rumor_stage(r.get("company_name", ""), code.strip(), theme.strip())
+                st.session_state.rumor_result = rumor_data
+                st.rerun()
 
-        # 6カテゴリの内訳
-        scores = kpi.get("scores", {})
-        details = kpi.get("details", {})
+    if rumor_data and "error" not in rumor_data:
+        rumor_stage_value = rumor_data.get("rumor_stage")
+        stage_label = rumor_data.get("stage_label", "")
+        evidence = rumor_data.get("evidence", "")
+        media_count = rumor_data.get("media_count", "")
+        market_sentiment = rumor_data.get("market_sentiment", "")
+        risk_note = rumor_data.get("risk_note", "")
 
-        categories = [
-            ("valuation", "① バリュエーション"),
-            ("growth", "② 成長性"),
-            ("health", "③ 健全性"),
-            ("earnings", "④ 決算の質"),
-            ("eps", "⑤ EPSトレンド"),
-            ("demand", "⑥ 需給"),
-        ]
+        st.markdown("### 📡 Rumor Stage（噂の成熟度）")
 
-        col_left, col_right = st.columns(2)
-        for i, (key, label) in enumerate(categories):
-            s = scores.get(key, 0)
-            d = details.get(key, "")
-            sign = "+" if s > 0 else ""
-            with col_left if i < 3 else col_right:
-                st.markdown(f"**{label}**: {sign}{s}")
-                render_score_bar(s)
-                st.caption(d)
+        # ステージを大きく表示
+        stage_colors = {1: "#7F77DD", 2: "#1D9E75", 3: "#378ADD", 4: "#EF9F27", 5: "#E24B4A"}
+        stage_names = {1: "💤 微かな予兆", 2: "🌱 芽吹き", 3: "📢 噂の拡散", 4: "📰 コンセンサス形成", 5: "✅ 事実確認"}
+        sc = stage_colors.get(rumor_stage_value, "#888")
+        sn = stage_names.get(rumor_stage_value, "不明")
+
+        st.markdown(
+            f'<div style="text-align:center;padding:15px;background:{sc}22;border:2px solid {sc};border-radius:12px;margin:10px 0;">'
+            f'<div style="font-size:36px;font-weight:bold;color:{sc};">Stage {rumor_stage_value}</div>'
+            f'<div style="font-size:18px;color:{sc};">{sn}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # 5段階のプログレスバー
+        bar_html = '<div style="display:flex;gap:4px;margin:10px 0;">'
+        for i in range(1, 6):
+            active = i <= rumor_stage_value
+            c = sc if active else "#2a2a3e"
+            bar_html += f'<div style="flex:1;height:8px;background:{c};border-radius:4px;"></div>'
+        bar_html += '</div>'
+        st.markdown(bar_html, unsafe_allow_html=True)
+
+        with st.expander("📋 判定の詳細"):
+            st.write(f"**根拠:** {evidence}")
+            st.write(f"**メディア記事数:** {media_count}")
+            st.write(f"**市場の温度感:** {market_sentiment}")
+            st.write(f"**⚠️ 注意:** {risk_note}")
 
         st.divider()
+    elif rumor_data and "error" in rumor_data:
+        st.error(f"Rumor判定エラー: {rumor_data['error']}")
+
+    # ============================================================
+    # 🎯 総合判定(KPIスコア + Rumor補正 → 100点)
+    # ============================================================
+    kpi = calc_kpi_score(r, rumor_stage=rumor_stage_value)
+
+    st.markdown("### 🎯 総合判定")
+
+    # 大きなスコア表示
+    col_score, col_verdict = st.columns([1, 2])
+    with col_score:
+        render_big_score(kpi["final_score"])
+    with col_verdict:
+        verdict = kpi["verdict"]
+        if kpi["verdict_color"] == "success":
+            st.success(f"**{verdict}**")
+        elif kpi["verdict_color"] == "error":
+            st.error(f"**{verdict}**")
+        else:
+            st.warning(f"**{verdict}**")
+
+        st.caption(f"ファンダ基礎点: {kpi['base_score']}点")
+        if kpi["rumor_stage"] is not None:
+            st.caption(f"Rumor補正: ×{kpi['rumor_multiplier']} ({kpi['rumor_label']})")
+        else:
+            st.caption("Rumor補正: なし（投資テーマを入力してRumor判定を実行すると精度が上がります）")
+
+    # 6カテゴリの内訳
+    scores = kpi.get("scores", {})
+    details = kpi.get("details", {})
+
+    categories = [
+        ("valuation", "① バリュエーション"),
+        ("growth", "② 成長性"),
+        ("health", "③ 健全性"),
+        ("earnings", "④ 決算の質"),
+        ("eps", "⑤ EPSトレンド"),
+        ("demand", "⑥ 需給"),
+    ]
+
+    col_left, col_right = st.columns(2)
+    for i, (key, label) in enumerate(categories):
+        s = scores.get(key, 0)
+        d = details.get(key, "")
+        sign = "+" if s > 0 else ""
+        with col_left if i < 3 else col_right:
+            st.markdown(f"**{label}**: {sign}{s}")
+            render_score_bar(s)
+            st.caption(d)
+
+    st.divider()
 
     # 主要指標 4カラム
     c1, c2, c3, c4 = st.columns(4)
@@ -779,7 +959,6 @@ if r:
     # ④ セグメント情報
     st.markdown("### ④ セグメント別売上構成")
     st.caption("J-Quantsにセグメントデータはないため、決算説明資料を見ながら手入力。")
-    st.caption("TIP: 決算説明資料は各社IRページ、または TDnet (https://www.release.tdnet.info/) で取得")
 
     seg_key = f"seg_{r.get('code')}"
     num_segments = st.number_input("セグメント数", min_value=1, max_value=8, value=3, key=f"{seg_key}_n")
@@ -788,12 +967,9 @@ if r:
     cols_seg = st.columns(min(num_segments, 4))
     for i in range(num_segments):
         with cols_seg[i % 4]:
-            name = st.text_input(f"セグメント{i+1}名", key=f"{seg_key}_name_{i}",
-                                 placeholder="例: エナジー")
-            sales_pct = st.number_input(f"売上構成比 (%)", min_value=0, max_value=100, value=0,
-                                        key=f"{seg_key}_pct_{i}")
-            growth = st.text_input(f"前年比成長率", key=f"{seg_key}_growth_{i}",
-                                   placeholder="例: +12%")
+            name = st.text_input(f"セグメント{i+1}名", key=f"{seg_key}_name_{i}", placeholder="例: エナジー")
+            sales_pct = st.number_input(f"売上構成比 (%)", min_value=0, max_value=100, value=0, key=f"{seg_key}_pct_{i}")
+            growth = st.text_input(f"前年比成長率", key=f"{seg_key}_growth_{i}", placeholder="例: +12%")
             if name:
                 seg_data.append({"name": name, "pct": sales_pct, "growth": growth})
 
@@ -809,18 +985,6 @@ if r:
                 )
         bar_html += '</div>'
         st.markdown(bar_html, unsafe_allow_html=True)
-
-        legend_html = '<div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:4px;">'
-        for i, seg in enumerate(seg_data):
-            if seg["pct"] > 0:
-                c = colors[i % len(colors)]
-                g = f" ({seg['growth']})" if seg['growth'] else ""
-                legend_html += (
-                    f'<span><span style="display:inline-block;width:10px;height:10px;background:{c};'
-                    f'border-radius:2px;margin-right:4px;"></span>{seg["name"]}{g}</span>'
-                )
-        legend_html += '</div>'
-        st.markdown(legend_html, unsafe_allow_html=True)
 
     st.divider()
 
@@ -853,11 +1017,9 @@ if r:
                           delta=f"期待値比: {round(prog_n - exp, 1):+}pt" if exp else None,
                           delta_color="normal" if prog_n and exp and prog_n >= exp else "inverse")
 
-        verdict = eq.get("progress_verdict")
-        if verdict:
-            st.markdown(f"**進捗判定: {verdict}**")
-
-        st.write("")
+        pv = eq.get("progress_verdict")
+        if pv:
+            st.markdown(f"**進捗判定: {pv}**")
 
         eps_yoy = eq.get("eps_yoy", [])
         if eps_yoy:
@@ -866,18 +1028,11 @@ if r:
             for i, e in enumerate(eps_yoy):
                 with cols_eps[i]:
                     color = "normal" if e["yoy_pct"] > 0 else "inverse"
-                    st.metric(
-                        f"{e['quarter']}",
-                        f"¥{e['curr_eps']}",
-                        delta=f"前年比 {e['yoy_pct']:+}%",
-                        delta_color=color,
-                    )
+                    st.metric(f"{e['quarter']}", f"¥{e['curr_eps']}", delta=f"前年比 {e['yoy_pct']:+}%", delta_color=color)
 
-        eps_trend = eq.get("eps_trend")
-        if eps_trend:
-            st.markdown(f"**EPSトレンド: {eps_trend}**")
-
-        st.write("")
+        et = eq.get("eps_trend")
+        if et:
+            st.markdown(f"**EPSトレンド: {et}**")
 
         revisions = eq.get("revisions", [])
         if revisions:
@@ -888,23 +1043,9 @@ if r:
                     color = "normal" if rev["change_pct"] >= 0 else "inverse"
                     st.metric(rev["item"], f"{rev['change_pct']:+}%", delta_color=color)
 
-        rev_verdict = eq.get("revision_verdict")
-        if rev_verdict:
-            st.markdown(f"**修正判定: {rev_verdict}**")
-
-        with st.expander("📋 通期会社予想の詳細"):
-            f_data = {
-                "売上高": eq.get("forecast_sales"),
-                "営業利益": eq.get("forecast_op"),
-                "純利益": eq.get("forecast_np"),
-                "EPS": eq.get("forecast_eps"),
-            }
-            for label, val in f_data.items():
-                if val:
-                    if label == "EPS":
-                        st.write(f"- {label}: ¥{val:,.2f}")
-                    else:
-                        st.write(f"- {label}: {val / 1e8:,.0f}億円")
+        rv = eq.get("revision_verdict")
+        if rv:
+            st.markdown(f"**修正判定: {rv}**")
     else:
         st.caption("決算データが不足しています")
 
@@ -946,18 +1087,6 @@ if r:
     with col_m2:
         st.text_input("想定保有期間", key=f"{memo_key}_horizon", placeholder="例: 1-2年")
         st.text_input("エグジットシナリオ", key=f"{memo_key}_exit", placeholder="例: PER25倍超で段階利確")
-
-    st.write("")
-    col_b1, col_b2, col_b3 = st.columns(3)
-    with col_b1:
-        if st.button("✅ 買い判断", use_container_width=True):
-            st.success("買い判断を記録 (将来: 判断ログに保存)")
-    with col_b2:
-        if st.button("⏸ 見送り", use_container_width=True):
-            st.info("見送りを記録")
-    with col_b3:
-        if st.button("👁 監視リスト追加", use_container_width=True):
-            st.info("監視リストに追加 (将来: ウォッチリスト機能)")
 
 else:
     st.info("証券コードを入力して「分析する」を押してください。")
