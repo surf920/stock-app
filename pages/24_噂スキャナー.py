@@ -8,7 +8,7 @@ from api_helper import call_anthropic_api
 
 # === Claude API 設定 ===
 MODEL = "claude-opus-4-6"
-MAX_TOKENS = 4000
+MAX_TOKENS = 8000
 TODAY = datetime.now().strftime("%Y年%m月%d日")
 ANTHROPIC_API_KEY = st.secrets["ANTHROPIC_API_KEY"]
 HEADERS = {
@@ -114,10 +114,11 @@ def run_scan(theme: str) -> dict:
 - 率直な口調で、ただし内容の鋭さは削らない
 """
 
-    payload = {
+  payload = {
         "model": MODEL,
         "max_tokens": MAX_TOKENS,
         "tools": WEB_SEARCH_TOOL,
+        "system": "あなたはJSON生成マシンです。ウェブ検索を行い、結果を必ずJSON形式のみで返してください。JSON以外のテキスト(説明、前置き、思考過程)は一切出力しないでください。",
         "messages": [{"role": "user", "content": prompt}],
     }
 
