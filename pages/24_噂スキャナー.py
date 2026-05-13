@@ -114,12 +114,12 @@ def run_scan(theme: str) -> dict:
 - 率直な口調で、ただし内容の鋭さは削らない
 """
 
-  payload = {
+    payload = {
         "model": MODEL,
         "max_tokens": MAX_TOKENS,
         "tools": WEB_SEARCH_TOOL,
         "system": "あなたはJSON生成マシンです。ウェブ検索を行い、結果を必ずJSON形式のみで返してください。JSON以外のテキスト(説明、前置き、思考過程)は一切出力しないでください。",
-        "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": prompt}],
     }
 
     result, error = call_anthropic_api(HEADERS, payload)
