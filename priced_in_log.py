@@ -43,13 +43,20 @@ UNIVERSE = [
 # GitHub API ヘルパー（Home.py と同じ方式）
 # =====================================================
 def _get_github_config():
-    """GitHub 設定を取得 → (token, repo)"""
+    """GitHub 設定を取得 → (token, repo, err: str)"""
     try:
         token = st.secrets["github"]["token"]
+    except Exception as e:
+        return None, None, f"token: {type(e).__name__}: {e}"
+    try:
         repo = st.secrets["github"]["repo"]
-        return token, repo
-    except Exception:
-        return None, None
+    except Exception as e:
+        return None, None, f"repo: {type(e).__name__}: {e}"
+    if not token:
+        return None, None, "token is empty"
+    if not repo:
+        return None, None, "repo is empty"
+    return token, repo, ""
 
 
 def _github_get_file(token, repo, path):
@@ -100,7 +107,7 @@ def _github_put_file(token, repo, path, content_str, sha=None):
 # =====================================================
 def load_log():
     """記録ログを読み込む → (records: list, sha: str or None)"""
-    token, repo = _get_github_config()
+    token, repo, _ = _get_github_config()
     if not token or not repo:
         return [], None
     content, sha = _github_get_file(token, repo, LOG_FILE)
@@ -119,9 +126,9 @@ def load_log():
 
 def save_log(records, sha):
     """記録ログを書き込む → (ok: bool, detail: str)"""
-    token, repo = _get_github_config()
-    if not token or not repo:
-        return False, "Secrets が読めません（st.secrets['github']['token'] / ['repo']）"
+    token, repo, cfg_err = _get_github_config()
+    if cfg_err:
+        return False, f"Secrets エラー — {cfg_err}"
     try:
         content_str = json.dumps(records, ensure_ascii=False, indent=2)
     except Exception as e:
