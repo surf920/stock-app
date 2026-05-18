@@ -68,7 +68,7 @@ def _github_get_file(token, repo, path):
 
 
 def _github_put_file(token, repo, path, content_str, sha=None):
-    """GitHub にファイルを書き込み（create or update）→ 成功なら True"""
+    """GitHub にファイルを書き込み（create or update）→ (ok: bool, detail: str)"""
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -81,8 +81,18 @@ def _github_put_file(token, repo, path, content_str, sha=None):
     }
     if sha:
         body["sha"] = sha
-    r = requests.put(url, headers=headers, json=body, timeout=15)
-    return r.status_code in (200, 201)
+    try:
+        r = requests.put(url, headers=headers, json=body, timeout=15)
+    except Exception as e:
+        return False, f"request error: {e}"
+    if r.status_code in (200, 201):
+        return True, ""
+    # 失敗時：GitHubが返した理由をそのまま見せる
+    try:
+        msg = r.json().get("message", "")
+    except Exception:
+        msg = (r.text or "")[:200]
+    return False, f"HTTP {r.status_code} — {msg}"
 
 
 # =====================================================
@@ -108,11 +118,14 @@ def load_log():
 
 
 def save_log(records, sha):
-    """記録ログを書き込む → 成功なら True"""
+    """記録ログを書き込む → (ok: bool, detail: str)"""
     token, repo = _get_github_config()
     if not token or not repo:
-        return False
-    content_str = json.dumps(records, ensure_ascii=False, indent=2)
+        return False, "Secrets が読めません（st.secrets['github']['token'] / ['repo']）"
+    try:
+        content_str = json.dumps(records, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return False, f"JSON 変換エラー: {e}"
     return _github_put_file(token, repo, LOG_FILE, content_str, sha)
 
 
@@ -136,7 +149,7 @@ def append_entry(entry):
     if is_recorded(records, entry["ticker"], entry["earnings_date"]):
         return False, "この銘柄の今回の決算は既に記録済みです"
     records.append(entry)
-    ok = save_log(records, sha)
+    ok, detail = save_log(records, sha)
     if ok:
         return True, f"記録しました（現在 {len(records)} 件）"
-    return False, "GitHub への保存に失敗しました（Secrets 設定を確認してください）"
+    return False, f"GitHub への保存に失敗: {detail}"
