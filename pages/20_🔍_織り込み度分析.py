@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 import time
 import requests
 
+from priced_in_log import (
+    UNIVERSE, HYPOTHESIS, load_log, append_entry,
+    make_entry_id, is_recorded,
+)
+
 st.set_page_config(page_title="織り込み度分析", page_icon="🔍", layout="wide")
 
 st.title("🔍 織り込み度分析（決算イベント）")
@@ -216,6 +221,58 @@ def calc_actual_earnings_moves(hist, earnings_dates_df):
 # Main UI
 # =====================================================
 
+# -----------------------------------------------------
+# 📝 今日記録すべき銘柄（前向き検証）
+# -----------------------------------------------------
+with st.expander("📝 今日記録すべき銘柄をチェック（前向き検証 / 仮説A）", expanded=False):
+    st.caption(
+        f"固定ユニバース {len(UNIVERSE)} 銘柄のうち、決算が近い銘柄を表示します。"
+        "　検証する仮説 = 仮説A（高スコア → 実際の値動きは予想より小さい）"
+    )
+    st.caption("⚠️ レート制限対策で1銘柄ずつ確認するため、30〜60秒ほどかかります（週1回の想定）")
+    if st.button("🔍 決算が近い銘柄を探す", key="check_due_tickers"):
+        due_records, _ = load_log()
+        due_list = []
+        _prog = st.progress(0)
+        _stat = st.empty()
+        _now = pd.Timestamp.now()
+        for _i, _sym in enumerate(UNIVERSE):
+            _prog.progress((_i + 1) / len(UNIVERSE))
+            _stat.text(f"確認中: {_sym} ({_i + 1}/{len(UNIVERSE)})")
+            try:
+                _edf = get_earnings_dates(_sym)
+                if _edf is None:
+                    continue
+                _eidx = _edf.index
+                _eidx = _eidx.tz_localize(None) if _eidx.tz is not None else _eidx
+                _future = _eidx[_eidx > _now]
+                if len(_future) == 0:
+                    continue
+                _next_e = _future.min()
+                _days = (_next_e - _now).days
+                if 0 <= _days <= 7:
+                    _edate = _next_e.strftime('%Y-%m-%d')
+                    due_list.append({
+                        "ティッカー": _sym,
+                        "次回決算": _edate,
+                        "あと(日)": _days,
+                        "記録済み": "✅" if is_recorded(due_records, _sym, _edate) else "—",
+                    })
+                time.sleep(1.5)
+            except Exception:
+                continue
+        _prog.empty()
+        _stat.empty()
+        if due_list:
+            due_df = pd.DataFrame(due_list).sort_values("あと(日)")
+            st.dataframe(due_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "「記録済み」が — の銘柄を、下のティッカー欄に入力 → スコアを確認 → "
+                "「この銘柄を記録」ボタンで保存してください。記録の目安は決算3〜5日前です。"
+            )
+        else:
+            st.info("今後7日以内に決算がある銘柄はありませんでした。")
+
 col_input1, col_input2 = st.columns([2, 3])
 with col_input1:
     ticker_symbol = st.text_input(
@@ -408,6 +465,55 @@ if earnings_df is not None:
             ))
             fig_gauge.update_layout(height=300)
             st.plotly_chart(fig_gauge, use_container_width=True)
+
+            # --- 前向き検証: この銘柄を記録する ---
+            st.markdown("---")
+            if next_earnings is not None:
+                _edate = next_earnings.strftime('%Y-%m-%d')
+                _days_to = (next_earnings - pd.Timestamp.now()).days
+                _existing_log, _ = load_log()
+                if is_recorded(_existing_log, ticker_symbol, _edate):
+                    st.success(
+                        f"✅ {ticker_symbol}（決算 {_edate}）は記録済みです"
+                    )
+                else:
+                    st.markdown(
+                        f"**📝 前向き検証ログ** — 仮説{HYPOTHESIS} の検証用に、"
+                        "今のスコアをそのまま保存します（手入力なし）。"
+                    )
+                    if st.button(
+                        f"📝 この銘柄を記録（{ticker_symbol} / 決算 {_edate}）",
+                        key="record_priced_in",
+                        type="primary",
+                    ):
+                        entry = {
+                            "id": make_entry_id(ticker_symbol, _edate),
+                            "ticker": ticker_symbol,
+                            "recorded_at": datetime.now().strftime('%Y-%m-%d'),
+                            "earnings_date": _edate,
+                            "days_to_earnings": int(_days_to),
+                            "current_price": round(float(current_price), 2),
+                            "implied_move_pct": round(float(im_pct), 2),
+                            "hist_avg_move_pct": round(float(avg_abs_move), 2),
+                            "ratio": round(float(ratio), 3),
+                            "score": int(round(score)),
+                            "option_expiry": best_exp,
+                            "hypothesis": HYPOTHESIS,
+                            "actual_move_pct": None,
+                            "resolved": False,
+                        }
+                        ok, msg = append_entry(entry)
+                        if ok:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.warning(f"⚠️ {msg}")
+                    if not (3 <= _days_to <= 5):
+                        st.caption(
+                            f"※ 決算まであと {_days_to} 日です。"
+                            "記録の目安は決算3〜5日前（記録自体は可能です）。"
+                        )
+            else:
+                st.caption("※ 次回決算日が取得できないため、記録はスキップします。")
 
         st.markdown("#### 決算ごとの価格変動")
         fig = go.Figure()
