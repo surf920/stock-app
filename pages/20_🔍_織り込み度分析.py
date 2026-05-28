@@ -233,6 +233,11 @@ with st.expander("📝 今日記録すべき銘柄をチェック（前向き検
     if st.button("🔍 決算が近い銘柄を探す", key="check_due_tickers"):
         due_records, _ = load_log()
         due_list = []
+        # 内訳カウンタ — 沈黙する失敗を可視化するため
+        _n_due = 0          # 7日以内に決算あり
+        _n_no_event = 0     # 取得成功・該当決算なし
+        _n_fetch_fail = 0   # データ取得に失敗（yfinance レート制限・障害など）
+        _fail_syms = []
         _prog = st.progress(0)
         _stat = st.empty()
         _now = pd.Timestamp.now()
@@ -242,11 +247,16 @@ with st.expander("📝 今日記録すべき銘柄をチェック（前向き検
             try:
                 _edf = get_earnings_dates(_sym)
                 if _edf is None:
+                    _n_fetch_fail += 1
+                    _fail_syms.append(_sym)
+                    time.sleep(1.5)
                     continue
                 _eidx = _edf.index
                 _eidx = _eidx.tz_localize(None) if _eidx.tz is not None else _eidx
                 _future = _eidx[_eidx > _now]
                 if len(_future) == 0:
+                    _n_no_event += 1
+                    time.sleep(1.5)
                     continue
                 _next_e = _future.min()
                 _days = (_next_e - _now).days
@@ -258,11 +268,33 @@ with st.expander("📝 今日記録すべき銘柄をチェック（前向き検
                         "あと(日)": _days,
                         "記録済み": "✅" if is_recorded(due_records, _sym, _edate) else "—",
                     })
+                    _n_due += 1
+                else:
+                    _n_no_event += 1
                 time.sleep(1.5)
             except Exception:
+                _n_fetch_fail += 1
+                _fail_syms.append(_sym)
                 continue
         _prog.empty()
         _stat.empty()
+
+        # 結果の内訳を必ず表示（沈黙する失敗を防ぐ）
+        _total = len(UNIVERSE)
+        _success_rate = (_total - _n_fetch_fail) / _total * 100 if _total else 0
+        _c1, _c2, _c3, _c4 = st.columns(4)
+        _c1.metric("該当（7日以内）", _n_due)
+        _c2.metric("該当なし", _n_no_event)
+        _c3.metric("取得失敗", _n_fetch_fail)
+        _c4.metric("成功率", f"{_success_rate:.0f}%")
+        if _n_fetch_fail > 0:
+            st.warning(
+                f"⚠️ {_n_fetch_fail}/{_total} 銘柄でデータ取得に失敗しました "
+                f"(yfinance のレート制限・接続不安定の可能性): "
+                + ", ".join(_fail_syms[:10])
+                + ("…" if len(_fail_syms) > 10 else "")
+            )
+
         if due_list:
             due_df = pd.DataFrame(due_list).sort_values("あと(日)")
             st.dataframe(due_df, use_container_width=True, hide_index=True)
@@ -270,8 +302,13 @@ with st.expander("📝 今日記録すべき銘柄をチェック（前向き検
                 "「記録済み」が — の銘柄を、下のティッカー欄に入力 → スコアを確認 → "
                 "「この銘柄を記録」ボタンで保存してください。記録の目安は決算3〜5日前です。"
             )
+        elif _n_fetch_fail == _total:
+            st.error("全銘柄でデータ取得に失敗しました。yfinance が応答していません。時間をおいて再実行してください。")
         else:
-            st.info("今後7日以内に決算がある銘柄はありませんでした。")
+            st.info(
+                f"取得できた {_total - _n_fetch_fail} 銘柄の中に、"
+                "今後7日以内に決算がある銘柄はありませんでした。"
+            )
 
 col_input1, col_input2 = st.columns([2, 3])
 with col_input1:
