@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ESTC_2026-08-27",
+    "ticker": "ESTC",
+    "recorded_at": "2026-07-14",
+    "earnings_date": "2026-08-27",
+    "days_to_earnings": 43,
+    "current_price": 62.85,
+    "implied_move_pct": 35.72,
+    "hist_avg_move_pct": 14.23,
+    "ratio": 2.511,
+    "score": 100,
+    "option_expiry": "2026-11-20",
+    "hypothesis": "A",
+    "actual_move_pct": null,
+    "resolved": false
+  }
+]
